@@ -1,5 +1,6 @@
 #!/bin/bash
-# COMPLETED profile_taxa + profile_function + MEDI_QUANT:kraken stats,
+# COMPLETED profile_taxa + profile_function + MEDI_QUANT:kraken + StrainPhlAn
+# (sample2markers/print_clades/extract_markers/strainphlan) stats,
 # summarized by process then date.
 set -euo pipefail
 
@@ -17,7 +18,7 @@ find "$SCRIPT_DIR" -name "*_trace.txt" -type f | sort | head -1 | xargs head -1 
 
 find "$SCRIPT_DIR" -name "*_trace.txt" -type f | sort | while read -r f; do
     project=$(basename "$(dirname "$(dirname "$f")")")
-    grep -E "profile_taxa|profile_function|kraken" "$f" \
+    grep -E "profile_taxa|profile_function|kraken|sample2markers|print_clades|extract_markers|strainphlan" "$f" \
         | grep -v "kraken_report" \
         | grep "COMPLETED" \
         | sed "s|^|${project}\t$(basename "$f")\t|" || true

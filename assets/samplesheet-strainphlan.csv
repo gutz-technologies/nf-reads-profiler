@@ -5,3 +5,8 @@ SRS019161,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS
 SRS013951,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS013951.fastq.gz,,,HMP_STRAINPHLAN
 SRS014613,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS014613.fastq.gz,,,HMP_STRAINPHLAN
 SRS064276,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS064276.fastq.gz,,,HMP_STRAINPHLAN
+SRR36835076,,,SRR36835076,SRP662258
+SRR36835334,,,SRR36835334,SRP662258
+SRR36835853,,,SRR36835853,SRP662258
+SRR36835882,,,SRR36835882,SRP662258
+SRR36835310,,,SRR36835310,SRP662258
