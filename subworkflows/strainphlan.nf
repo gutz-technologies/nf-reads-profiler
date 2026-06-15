@@ -40,6 +40,7 @@ process sample2markers {
         -i ${sam} \\
         -o . \\
         -n ${task.cpus} \\
+        -d ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
         --input_format bz2
     """
 }
@@ -49,13 +50,15 @@ process print_clades {
 
     tag "$run"
     container params.docker_container_metaphlan
-    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan" }, mode: 'copy', pattern: "clades_detected.tsv"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan" }, mode: 'copy', pattern: "print_clades_only.tsv"
 
     input:
     tuple val(run), path(markers)
 
     output:
-    tuple val(run), path("clades_detected.tsv"), emit: clades
+    // StrainPhlAn --print_clades_only writes the clade table to print_clades_only.tsv
+    // in the output dir (not stdout).
+    tuple val(run), path("print_clades_only.tsv"), emit: clades
 
     script:
     """
@@ -64,8 +67,7 @@ process print_clades {
         --print_clades_only \\
         --database ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
         -o . \\
-        -n ${task.cpus} \\
-        > clades_detected.tsv
+        -n ${task.cpus}
     """
 }
 
@@ -95,6 +97,10 @@ process strainphlan {
 
     tag "${run}:${clade}"
     container params.docker_container_metaphlan
+    // The (run x clade) cross-product includes combos where a clade isn't present
+    // in a run (StrainPhlAn exits with "inputs ... less than 4"). That's expected,
+    // not fatal — skip those and keep the trees that do build.
+    errorStrategy 'ignore'
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.{tre,info,aln}"
 
     input:
