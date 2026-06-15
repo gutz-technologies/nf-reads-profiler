@@ -1,0 +1,7 @@
+sample,fastq_1,fastq_2,sra_accession,study_accession
+SRS055982,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS055982.fastq.gz,,,HMP_STRAINPHLAN
+SRS022137,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS022137.fastq.gz,,,HMP_STRAINPHLAN
+SRS019161,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS019161.fastq.gz,,,HMP_STRAINPHLAN
+SRS013951,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS013951.fastq.gz,,,HMP_STRAINPHLAN
+SRS014613,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS014613.fastq.gz,,,HMP_STRAINPHLAN
+SRS064276,/home/ubuntu/github/nf-reads-profiler/assets/test_data/strainphlan/SRS064276.fastq.gz,,,HMP_STRAINPHLAN
