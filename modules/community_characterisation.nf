@@ -49,7 +49,7 @@ process profile_taxa {
     --nproc ${task.cpus * 2} \\
     ${sam_opts} \\
     --output_file ${name}_metaphlan.biom \\
-    $reads \\
+    $reads
 
   # MultiQC doesn't have a module for Metaphlan yet. As a consequence, I
   # had to create a YAML pathwith all the info I need via a bash script

@@ -6,6 +6,7 @@ include { profile_taxa; profile_function; combine_humann_tables; combine_metaphl
 include { MULTIQC; get_software_versions; clean_reads; count_reads} from './modules/house_keeping'
 include { AWS_DOWNLOAD; FASTERQ_DUMP  } from './modules/data_handling'
 include { MEDI_QUANT } from './subworkflows/quant'
+include { STRAINPHLAN } from './subworkflows/strainphlan'
 include { samplesheetToList } from 'plugin/nf-schema'
 
 def versionMessage()
@@ -267,6 +268,12 @@ workflow {
             .groupTuple()
 
   combine_metaphlan_tables(ch_metaphlan)
+
+  // Strain-level profiling (StrainPhlAn) from the per-sample MetaPhlAn SAMs.
+  // profile_taxa only emits SAM when enable_strainphlan=true.
+  if (params.enable_strainphlan) {
+    STRAINPHLAN(profile_taxa.out.sam)
+  }
 
   // MEDI quantification workflow — I13 shortcut: diamond_unaligned → Kraken2 directly.
   // Reads have already passed HUMAnN's nucleotide + protein filters; no fastp needed.
