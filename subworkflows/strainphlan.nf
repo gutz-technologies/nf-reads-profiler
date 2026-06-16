@@ -101,14 +101,32 @@ process strainphlan {
     // in a run (StrainPhlAn exits with "inputs ... less than 4"). That's expected,
     // not fatal — skip those and keep the trees that do build.
     errorStrategy 'ignore'
-    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.{tre,info,aln}"
+    // Per-suffix for everything in trees/:
+    //   RAxML_*                  RAxML tree + info/log files
+    //   *.aln                    concatenated multiple-sequence alignment
+    //   *.info / *.polymorphic   marker stats, polymorphic-site stats
+    //   *.mutation / *_mutation_rates  mutation-rate summary + per-marker tables
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "RAxML_*"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.aln"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.info"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.polymorphic"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*.mutation"
+    publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/trees" }, mode: 'copy', pattern: "*_mutation_rates"
 
     input:
     tuple val(run), path(markers), val(clade), path(clade_markers)
 
+    // publishDir only publishes files captured by an output declaration, so every
+    // artifact we want in trees/ must be declared here (the patterns above just
+    // filter this set).
     output:
-    tuple val(run), val(clade), path("*.tre"), emit: tree, optional: true
-    tuple val(run), val(clade), path("RAxML_*"), emit: raxml, optional: true
+    tuple val(run), val(clade), path("RAxML_bestTree.*.tre"), emit: tree, optional: true
+    tuple val(run), val(clade), path("RAxML_*"),          emit: raxml,          optional: true
+    tuple val(run), val(clade), path("*.aln"),            emit: alignment,      optional: true
+    tuple val(run), val(clade), path("*.info"),           emit: info,           optional: true
+    tuple val(run), val(clade), path("*.polymorphic"),    emit: polymorphic,    optional: true
+    tuple val(run), val(clade), path("*.mutation"),       emit: mutation,       optional: true
+    tuple val(run), val(clade), path("*_mutation_rates"), emit: mutation_rates, optional: true
 
     script:
     """
