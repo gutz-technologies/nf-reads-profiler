@@ -98,9 +98,13 @@ process strainphlan {
     tag "${run}:${clade}"
     container params.docker_container_metaphlan
     // The (run x clade) cross-product includes combos where a clade isn't present
-    // in a run (StrainPhlAn exits with "inputs ... less than 4"). That's expected,
-    // not fatal — skip those and keep the trees that do build.
-    errorStrategy 'ignore'
+    // in a run: StrainPhlAn prints "Less than 4 samples remained after filtering"
+    // and exits 1 (verified in trace, Jun-15 run). That's expected, not fatal — skip
+    // those and keep the trees that do build. Any OTHER exit status (OOM 137, missing
+    // DB, container 125-127, signals) is a real failure and must terminate the run.
+    // Residual risk: a genuine internal crash that also exits 1 would be ignored, but
+    // that is strictly safer than the old blanket 'ignore'.
+    errorStrategy { task.exitStatus == 1 ? 'ignore' : 'terminate' }
     // Per-suffix for everything in trees/:
     //   RAxML_*                  RAxML tree + info/log files
     //   *.aln                    concatenated multiple-sequence alignment

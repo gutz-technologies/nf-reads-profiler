@@ -27,7 +27,7 @@ process profile_taxa {
   output:
   tuple val(meta), path("*_metaphlan.biom"), emit: to_profile_function_bugs
   // SAM alignment when --enable_strainphlan, otherwise --no_map
-  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: true
+  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: !params.enable_strainphlan
   // tuple val(meta), path("*_profile_taxa_mqc.yaml"), emit: profile_taxa_log
 
 
