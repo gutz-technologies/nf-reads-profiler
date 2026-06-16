@@ -24,6 +24,8 @@ process sample2markers {
 
     tag "$name"
     container params.docker_container_metaphlan
+    // Single-threaded when run on single samples post alignment. cpus lives here, memory in config.
+    cpus 1
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/consensus_markers" }, mode: 'copy', pattern: "*.json.bz2"
 
     input:
@@ -39,7 +41,6 @@ process sample2markers {
     sample2markers.py \\
         -i ${sam} \\
         -o . \\
-        -n ${task.cpus} \\
         -d ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
         --input_format bz2
     """
@@ -50,6 +51,7 @@ process print_clades {
 
     tag "$run"
     container params.docker_container_metaphlan
+    cpus 1
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan" }, mode: 'copy', pattern: "print_clades_only.tsv"
 
     input:
@@ -66,8 +68,7 @@ process print_clades {
         -s ${markers} \\
         --print_clades_only \\
         --database ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
-        -o . \\
-        -n ${task.cpus}
+        -o .
     """
 }
 
@@ -76,6 +77,7 @@ process extract_markers {
 
     tag "$clade"
     container params.docker_container_metaphlan
+    cpus 1
 
     input:
     val clade
@@ -97,6 +99,7 @@ process strainphlan {
 
     tag "${run}:${clade}"
     container params.docker_container_metaphlan
+    cpus 1
     // The (run x clade) cross-product includes combos where a clade isn't present
     // in a run: StrainPhlAn prints "Less than 4 samples remained after filtering"
     // and exits 1 (verified in trace, Jun-15 run). That's expected, not fatal — skip
@@ -140,8 +143,7 @@ process strainphlan {
         -c ${clade} \\
         --database ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
         --mutation_rates \\
-        -o . \\
-        -n ${task.cpus}
+        -o .
     """
 }
 
