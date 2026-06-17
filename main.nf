@@ -272,6 +272,14 @@ workflow {
   // Strain-level profiling (StrainPhlAn) from the per-sample MetaPhlAn SAMs.
   // profile_taxa only emits SAM when enable_strainphlan=true.
   if (params.enable_strainphlan) {
+    // print_clades and the per-clade tree are per-run reduces (groupTuple on
+    // meta.run). A skipped sample never runs profile_taxa, so its SAM is never
+    // produced and it drops out of the reduce — silently truncating the clade
+    // set and tree leaves. SAM is not published (only consensus_markers are), so
+    // there's nothing to re-inject. Fail fast, same as the MEDI mapping guard.
+    if (params.skipCompleted.toBoolean()) {
+      error "enable_strainphlan is incompatible with skipCompleted — skipped samples would drop from the per-run clade detection and tree build, truncating the results. Set skipCompleted=false."
+    }
     STRAINPHLAN(profile_taxa.out.sam)
   }
 
