@@ -6,8 +6,9 @@ This pipeline is based on the original [YAMP](https://github.com/alesssia/YAMP) 
 
 Nextflow DSL2 pipeline for metagenomic read profiling. Core tools: MetaPhlAn4,
 HUMAnN4, fastp, MultiQC. Optional MEDI subworkflow (Kraken2/Bracken/Architeuthis)
-for food microbiome quantification. Runs on AWS Batch (primary) with local Docker
-for development.
+for food microbiome quantification, and an optional StrainPhlAn subworkflow for
+strain-level profiling. Runs on AWS Batch (primary) with local Docker for
+development.
 
 ## Usage
 
@@ -102,6 +103,10 @@ outdir/<project>/<run>/
   │     ├── merged/<lev>_merged.csv         # D/G/S merged
   │     ├── multiqc_report.html
   │     └── architeuthis/<id>_mapping.csv, mappings.csv   # only if --mapping (off by default)
+  ├── strainphlan/                          # only if --enable_strainphlan
+  │     ├── consensus_markers/<id>.json.bz2 # per-sample consensus markers
+  │     ├── print_clades_only.tsv           # clades detectable across the run's samples
+  │     └── trees/RAxML_*, *.aln            # per clade in --strainphlan_clades (empty = stop after print_clades)
   └── log/                                  # nf-profile-reads-Report_multiqc_report.html + _data/
 
 outdir/<project>/combined_bioms/            # project-wide biom rollup, one dir per type
@@ -120,6 +125,14 @@ outdir/<project>/reports/                   # timeline, report, trace (timestamp
 Kraken2 intermediates (`.k2`/`.tsv`) and the Bracken `*_bracken.tsv` side-file are
 **not** published — they flow through channels only (publishDir commented out in
 `subworkflows/quant.nf`).
+
+StrainPhlAn runs only with `--enable_strainphlan` (default off), which switches
+`profile_taxa` from `--no_map` to emitting a MetaPhlAn SAM per sample (the SAM
+itself is **not** published). `--strainphlan_clades` is a comma-separated clade
+list (e.g. `"t__SGB1877,t__SGB2318"`) to build trees for; empty (default) stops
+after `print_clades`, which reports the available clades. `--enable_strainphlan`
+is incompatible with `skipCompleted`: skipped samples would drop from the per-run
+clade detection and tree build, so the run errors fast if both are set.
 
 ## Databases
 

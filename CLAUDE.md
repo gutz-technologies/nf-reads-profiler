@@ -98,8 +98,8 @@ rows without local files but with an `[ESD]RR\d+` id go through `AWS_DOWNLOAD`
 
 ## Code architecture
 
-`main.nf` is the only top-level workflow. It wires three module files and one
-subworkflow:
+`main.nf` is the only top-level workflow. It wires three module files and two
+subworkflows:
 
 - `modules/data_handling.nf` — `AWS_DOWNLOAD`, `FASTERQ_DUMP` (SRA ingest from S3 → FASTQ).
 - `modules/house_keeping.nf` — `count_reads`, `clean_reads` (fastp), `get_software_versions`, `MULTIQC`.
@@ -110,6 +110,15 @@ subworkflow:
   `regroup_genefamilies`.
 - `subworkflows/quant.nf` — `MEDI_QUANT` (Kraken2 → Architeuthis filter →
   Bracken → food-content quantification), gated on `params.enable_medi`.
+- `subworkflows/strainphlan.nf` — `STRAINPHLAN` (sample2markers → print_clades →
+  extract_markers → strainphlan tree), gated on `params.enable_strainphlan`.
+  Consumes `profile_taxa.out.sam` — when `enable_strainphlan=true`, `profile_taxa`
+  runs MetaPhlAn with `-s <id>.sam.bz2` instead of `--no_map`. `print_clades` and
+  the per-clade RAxML tree are **per-run reduces** (`groupTuple` on `meta.run`);
+  with `strainphlan_clades` empty (default) it stops after `print_clades`, which
+  reports which clades are available before you commit to trees. Incompatible
+  with `skipCompleted` (guarded in `main.nf`): a skipped sample never produces a
+  SAM and SAM is not published, so it would silently drop from the per-run reduce.
 
 Channel shape used throughout: `[ meta, reads_or_file ]`, where `meta` is a
 map carrying at least `id` and `run` (study grouping key). Combines work by
@@ -183,6 +192,10 @@ Defined in `nextflow.config`:
 - `singleEnd`, `mergeReads`, `nreads` (32,000,000 cap), `minreads` (100,000 floor; samples below this are logged and dropped, not failed).
 - `process_humann_tables`, `humann_regroups` (e.g. `"uniref90_ko,uniref90_rxn"`), `split_size` — used by the currently-disabled regroup branch.
 - `humann_params` — passthrough (test profile sets `--bypass-translated-search`).
+- `enable_strainphlan` (default false) — emit MetaPhlAn SAM from `profile_taxa`
+  and run the StrainPhlAn subworkflow. Incompatible with `skipCompleted`.
+- `strainphlan_clades` — comma-separated clades (e.g. `"t__SGB1877,t__SGB2318"`)
+  to build strain trees for. Empty (default) stops after `print_clades`.
 - MEDI: `enable_medi`, `confidence`, `consistency`, `entropy`, `multiplicity`, `read_length`, `threshold`, `batchsize`, `mapping`, plus fastp knobs (`trim_front`, `min_length`, `quality_threshold`).
 
 Error strategy is profile-dependent. Azure uses `errorStrategy = 'ignore'`
@@ -205,6 +218,9 @@ outdir/<project>/<run>/
   │                      #   combined_bioms/ (no per-run copy). genefamilies_combined.tsv NOT published (~24 GB).
   ├── medi/              # only if --enable_medi: bracken/<lev>/<lev>_<id>.b2, food_{abundance,content}.csv,
   │                      #   <lev>_counts.csv (root), merged/<lev>_merged.csv, multiqc_report.html
+  ├── strainphlan/       # only if --enable_strainphlan: consensus_markers/<id>.json.bz2 per sample,
+  │                      #   print_clades_only.tsv (available clades), trees/RAxML_* + *.aln (per requested
+  │                      #   clade in strainphlan_clades). SAM alignments are NOT published.
   └── log/               # MultiQC report (nf-profile-reads-Report_multiqc_report.html + _data/)
 outdir/<project>/combined_bioms/ # single home for ALL biom, one dir per type: metaphlan/ genefamilies/
                                  #   pathabundance/ reactions/ humann_taxonomy/ medi/ (+ regrouped/ if --humann_regroup)
