@@ -15,8 +15,10 @@ process profile_taxa {
   tag "$name"
 
   // CPUs: request N from the scheduler, run with 2N internally (--nproc task.cpus * 2).
-  // Bowtie2 alignment is partially single-threaded; overprovisioning lets it burst
-  // onto idle cores without reserving them from the queue.
+  // Bowtie2 alignment is partially single-threaded; overprovisioning lets each job
+  // burst onto cores idle at that moment. On spot-metaphlan, 6 jobs (16 cpus each)
+  // share one r8g.metal-24xl (96 vCPU), so the 2x burst draws from the same shared
+  // pool rather than a per-job-dedicated VM — still safe since all 6 rarely peak at once.
   container params.docker_container_metaphlan
 
   publishDir {"${params.outdir}/${params.project}/${run}/taxa"}, mode: 'copy', pattern: "*.{biom,tsv,txt}"

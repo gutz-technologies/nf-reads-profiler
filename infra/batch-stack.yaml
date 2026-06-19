@@ -57,6 +57,15 @@ Parameters:
     Default: 0
     Description: Maximum vCPUs for on-demand fallback (cost safety net)
 
+  MaxvCPUsMetaphlan:
+    Type: Number
+    Default: 100
+    Description: >
+      Maximum vCPUs for the spot-metaphlan compute environment (profile_taxa +
+      StrainPhlAn). Spot-only; no on-demand fallback. Capped just above one
+      r8g.metal-24xl (96 vCPU) so Batch can launch exactly one bare-metal VM
+      and no second one (192 > 100).
+
   MonthlyBudgetThreshold:
     Type: Number
     Default: 200
@@ -95,6 +104,24 @@ Parameters:
       this parameter is used only for IAM policy permissions.
       The EcsInstanceRole is granted read-only access to this bucket.
       This bucket is NOT created or deleted by this stack.
+
+  ThinEcsAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
+    Description: >
+      Stock AL2023 ECS-optimized ARM64 AMI for the per-database queues
+      (spot-metaphlan, etc.). Resolved from the AWS public SSM parameter so it is
+      always current — no Packer rebuild. Unlike EcsAmiId this AMI bakes NO
+      databases and NO awscli; the queue's launch-template UserData installs
+      awscli to /opt/conda-aws/bin and copies its database from S3 at boot.
+
+  MetaphlanDbS3Uri:
+    Type: String
+    Default: s3://cjb-gutz-s3-demo/metaphlan_databases/vJan25/
+    Description: >
+      S3 prefix of the MetaPhlAn vJan25 database (~44 GB), copied to
+      /mnt/dbs/metaphlan_databases/vJan25/ at boot by the spot-metaphlan worker.
+      Must match direct_metaphlan_db in conf/aws_batch.config.
 
 # ---------------------------------------------------------------------------
 # S3
@@ -571,6 +598,91 @@ Resources:
             --==BOUNDARY==--
 
 # ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, copies vJan25 from S3 at boot (spot-metaphlan)
+# ---------------------------------------------------------------------------
+# Uses the stock AL2023 ECS ARM64 AMI (ThinEcsAmiId) — NO baked databases, NO
+# baked awscli. UserData, run SYNCHRONOUSLY so ECS registration is gated until
+# it finishes (an instance accepts no Batch jobs until vJan25 is present):
+#   1. install awscli v2 to /opt/conda-aws/bin (the GLOBAL aws.batch.cliPath;
+#      Nextflow bind-mounts the grandparent /opt/conda-aws into every container,
+#      so this path must exist on the host for any job to stage inputs).
+#   2. aws s3 cp --recursive the vJan25 DB to /mnt/dbs/metaphlan_databases/vJan25/.
+# One copy per instance (~3–5 min for ~44 GB), amortized over every profile_taxa
+# / StrainPhlAn job that lands on it. No FSR, no Packer rebuild. See
+# infra/multiqueue-design.md.
+
+  MetaphlanWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-metaphlan-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 200          # vJan25 ~44 GB + MetaPhlAn scratch; far less than the 500 GB ingest worker
+              VolumeType: gp3
+              Iops: 9000
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== spot-metaphlan worker boot at $(date) ==="
+
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            # 2. Copy vJan25 from S3 (SYNCHRONOUS — gates ECS registration).
+            # Skip the *_SGB.fna / *_SGB.fna.bz2 source sequences (~7.4 GB): they
+            # build the .bt2l index at `metaphlan --install` time and are NOT read
+            # at profiling time (the known-good local install ships neither).
+            # NOTE: if StrainPhlAn Pass-2 extract_markers ever needs _SGB.fna,
+            # drop these --exclude flags.
+            DEST=/mnt/dbs/metaphlan_databases/vJan25
+            mkdir -p "$DEST"
+            echo "=== Copying ${MetaphlanDbS3Uri} -> $DEST (excluding _SGB.fna*) ==="
+            if ! time "$AWS" s3 cp --recursive --only-show-errors \
+                 --exclude "*_SGB.fna" --exclude "*_SGB.fna.bz2" \
+                 "${MetaphlanDbS3Uri}" "$DEST/"; then
+              echo "FATAL: vJan25 copy failed — worker will not be useful" >&2
+              exit 1
+            fi
+            echo "OK: vJan25 present ($(du -sh "$DEST" | cut -f1))"
+
+            # 3. btop (monitoring; non-essential, don't fail boot on it).
+            echo "=== Installing btop ==="
+            dnf install -y bzip2 >/dev/null 2>&1 || yum install -y bzip2
+            cd /tmp
+            curl -fLO https://github.com/aristocratos/btop/releases/download/v1.4.0/btop-aarch64-linux-musl.tbz && \
+            tar -xf btop-aarch64-linux-musl.tbz && \
+            cp btop/bin/btop /usr/local/bin/ && \
+            btop --version || echo "WARN: btop install failed, continuing"
+
+            echo "=== spot-metaphlan worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
 # Compute Environments — Graviton (ARM64) only
 # ---------------------------------------------------------------------------
 # All containers in this pipeline publish multi-arch images (linux/arm64 + amd64).
@@ -656,6 +768,49 @@ Resources:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
 
+  # spot-metaphlan: dedicated spot CE for profile_taxa + StrainPhlAn. Thin AMI
+  # that copies vJan25 from S3 at boot (see MetaphlanWorkerLaunchTemplate).
+  # Spot-only — no on-demand fallback (these jobs just retry on reclaim).
+  # Bare metal: r8g.metal-24xl (96 vCPU / 768 GB) measured <5% historical
+  # interruption + 86% savings vs on-demand (infra/get_aws_spot_prices.py
+  # --sort vcpu, pulls AWS's public Spot Advisor data) — cheapest $/vCPU of any
+  # practical (non-exotic) Graviton type, likely because ARM sees little big-data
+  # contention. One box fits 6 profile_taxa jobs (96 vCPU / 16 cpus each), all
+  # sharing the single staged vJan25 copy on that instance.
+  #
+  # TRADE-OFF: single instance type = single spot pool, no SPOT_CAPACITY_OPTIMIZED
+  # depth to fall back on if that pool goes dry (this bit us 2026-06-18 with only
+  # m8g/r8g .4xlarge — pools went dry, workers reclaimed before boot+copy
+  # finished). Accepted here for this 20-sample rerun; revisit (add r8g.8xlarge /
+  # r8gd.metal-24xl as fallback pools) if metal capacity proves flaky at scale.
+  SpotMetaphlanComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsMetaphlan
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MetaphlanWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
 # ---------------------------------------------------------------------------
 # Job Queue
 # ---------------------------------------------------------------------------
@@ -673,6 +828,21 @@ Resources:
           ComputeEnvironment: !Ref SpotComputeEnvironment
         - Order: 2
           ComputeEnvironment: !Ref OnDemandComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-metaphlan: profile_taxa + StrainPhlAn jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  MetaphlanQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-metaphlan
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotMetaphlanComputeEnvironment
       Tags:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
@@ -1106,6 +1276,12 @@ Outputs:
     Value: !GetAtt SpotQueue.JobQueueArn
     Export:
       Name: !Sub "${AWS::StackName}-SpotQueueArn"
+
+  MetaphlanQueueArn:
+    Description: ARN of the spot-metaphlan job queue (profile_taxa + StrainPhlAn)
+    Value: !GetAtt MetaphlanQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-MetaphlanQueueArn"
 
   BatchJobRoleArn:
     Description: >
