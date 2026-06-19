@@ -163,6 +163,20 @@ here on purpose). ~3–5 min for vJan25, amortized over every job on the instanc
   queue is therefore the **largest projected savings** of the whole multiqueue
   effort — but it's last in rollout order because it's the hardest (RAM-sizing +
   hash warm). Until then, the head node stays the MEDI executor.
+- **DB location: local `/mnt/scratch/ssddbs` retires with MEDI.** Two unrelated
+  things share the `scratch` name — keep them straight:
+  - The **managed stack** never used `/mnt/scratch`. Baked workers stage DBs to
+    `/mnt/dbs/` (`worker-ami.pkr.hcl`), and the spot-metaphlan thin AMI copies
+    vJan25 to `/mnt/dbs/` at boot. This is the in-stack DB home.
+  - `/mnt/scratch/ssddbs` is the **local head/MEDI VM's** NVMe RAID — where local
+    MEDI (and the `nextflow.config` base DB defaults + Docker bind-mount) read
+    their DBs. That NVMe no longer exists on the current VM.
+
+  When MEDI migrates to `spot-medi`, its DBs get staged inside the managed stack
+  (same thin-AMI + S3-copy pattern, just RAM-class + warm), at which point the
+  local `/mnt/scratch/ssddbs` DB defaults and the `nextflow.config` Docker
+  bind-mount can be cleaned up. Don't mechanically repoint those local paths
+  before then — they belong to the local-MEDI era that this migration removes.
 
 ## Rollout order
 
