@@ -91,6 +91,28 @@ references `nf-reads-profiler-batch-job-role` as `aws.batch.jobRole`.
 Resource caps live in `conf/aws_batch.config` via `process.resourceLimits` —
 retries won't blow past these (prevents runaway memory on retry storms).
 
+### `project` and execution-report paths (config gotcha)
+
+`params.project` defaults to `"none"`; `main.nf` now fails fast if it's left
+unset (so outputs don't silently land under `<outdir>/none/`). Always set a real
+project.
+
+The `timeline`/`report`/`dag`/`trace` file paths embed `${params.outdir}` and
+`${params.project}`. Nextflow interpolates these GStrings **at config parse
+time**, not at runtime, so they freeze to whatever `project`/`outdir` are when
+the block is parsed. Consequences:
+
+- A `project` passed on the **CLI** (`--project`) binds before any config parses,
+  so it reaches the report paths — this is why playbook CLI runs land correctly.
+- A `project` set in a **`-c` run config's `params{}` block** is merged *after*
+  `nextflow.config`'s report blocks parse, so those blocks freeze to `none`.
+  `conf/aws_batch.config` re-declares the report blocks (after its own S3
+  `outdir`) to override that — but for `project` to resolve there, the run config
+  **must set `params { project = ... }` BEFORE `includeConfig
+  conf/aws_batch.config`**. Include-then-params freezes to `none` (verified with
+  `nextflow config`). Outputs (publishDir, `main.nf`) read `params.project` at
+  runtime and are always correct; only the four report files are affected.
+
 ## Key parameters
 
 Defined in `nextflow.config`:

@@ -130,6 +130,14 @@ workflow {
   if (params.version) { versionMessage(); exit 0 }
   if (params.help)    { helpMessage();    exit 0 }
 
+  // Require a real project name. The default 'none' silently lands all outputs and
+  // execution reports under <outdir>/none/ — easy to do by forgetting --project or
+  // an unset run config. Fail fast instead. (Report paths additionally need project
+  // set before `includeConfig conf/aws_batch.config`; see that file's note.)
+  if (!params.project || params.project == 'none') {
+    exit 1, "ERROR: params.project is unset (got '${params.project}'). Set --project <name> or params.project in your run config so outputs/reports don't land under '<outdir>/none/'."
+  }
+
   log.info """\
     [PIPELINE] nf-reads-profiler ${workflow.manifest.version} | profile=${workflow.profile}
     [WORKDIR]  ${workflow.workDir}
