@@ -89,6 +89,41 @@ EC2 + ECS + Nextflow trace.
 3. (Separately tracked) bowtie2 `--mm` memory-mapping — see
    `infra/multiqueue-design.md`.
 
+## Instance-type diversity for the 2k-sample run
+
+The current `spot-metaphlan` CE is **single instance type** (`r8g.metal-24xl`,
+`MaxvCPUsMetaphlan = 100` = one box). That's deliberate for validation, but a
+single instance type = a single spot pool with no `SPOT_CAPACITY_OPTIMIZED`
+depth to fall back on. A dry pool stalls every taxa/strain job (this bit us
+2026-06-18). At 2k samples that risk is unacceptable — we need multiple pools.
+
+**This run (run-2) is the probe**: it measures the *cost* and *availability* of
+`r8g.metal-24xl` under real load (boot success rate, reclaim events, $/sample).
+Capture those from the trace + EC2/Batch events and record below.
+
+Before the 2k run, do:
+
+- [ ] Run `infra/get_aws_spot_prices.py --sort vcpu` (AWS Spot Advisor data) and
+      shortlist Graviton types by $/vCPU **and** interruption rate.
+- [ ] Pick 2–3 additional types to add to `SpotMetaphlanComputeEnvironment`'s
+      `InstanceTypes` so `SPOT_CAPACITY_OPTIMIZED` can spread across pools.
+      Candidates (must hold the per-VM job packing; vJan25 ~44 GB staged once +
+      36 GB/job): `r8g.24xlarge`, `r8g.16xlarge`, `r8g.12xlarge`, `r8g.8xlarge`,
+      the NVMe `r8gd.*` variants, and `r7g.*` as an older-gen fallback. Note
+      jobs-per-VM (and thus the staged-copy amortization) changes per type:
+      96 vCPU → 6 jobs, 64 → 4, 48 → 3, 32 → 2.
+- [ ] Raise `MaxvCPUsMetaphlan` to allow several VMs concurrently (size it to the
+      target throughput, not one box).
+- [ ] Confirm memory headroom holds on the smallest chosen type (jobs × 36 GB
+      must fit, or reduce jobs/VM via `cpus`).
+- [ ] Re-validate a mid-size run on the mixed-pool CE before committing 2k.
+
+### Measured — r8g.metal-24xl cost & availability (run-2)
+
+_To fill from this run:_ spot $/hr actually paid, # reclaim/interruption events,
+boot success rate, $ per sample, and whether a single metal box was enough or
+Batch wanted more (capped at 100 vCPU).
+
 ## Measured — run 1 (2026-06-18, project cosmosid-strainphlan-smoke, r8g.4xlarge)
 
 > **Historical.** Run 1 used the *original* config: `r8g.4xlarge`, `cpus = 8`,
@@ -133,6 +168,32 @@ duration.
   the shared 16-vCPU VM) → the headline motivation for the 32-vCPU + bowtie2
   `--mm` speedups.
 - Confirmed via live `.command.sh`: `--nproc 8` (1:1, no oversubscription).
+
+## Measured — run 2 (2026-06-19, project cosmosid-infant-strainphlan, r8g.metal-24xl)
+
+The **shipped** config: `r8g.metal-24xl`, `cpus = 16`, `--nproc 32`, 6 jobs/VM.
+Larger run — ~180 samples (`count_reads` ×180), taxa + StrainPhlAn.
+
+Launched 14:12:45 UTC. Timeline so far (cold worker, no FSR, thin AMI):
+
+| Event | UTC | Δ from launch |
+|-------|-----|---------------|
+| First `profile_taxa` submitted | 14:12:55 | ~0 |
+| All 200 `profile_taxa` submitted | 14:19:04 | 6m | 
+| First `profile_taxa` COMPLETED | 14:29:04 | ~16m (boot + S3 vJan25 copy + first alignment) |
+
+- **0 failures / 0 aborts** across 478+ completed tasks at the ~2.5h mark.
+- `profile_taxa` completing cleanly on the metal queue (exit 0), confirming the
+  6-jobs-per-metal packing + `--nproc 32` config runs without OOM/contention
+  failures. (200 `profile_taxa` submitted vs 180 samples — a few re-runs under
+  `-resume`; none failed.)
+- **Reports caveat:** this run was launched before the report-path fix and with
+  the old config ordering, so its execution reports went to local
+  `results_local_logs/none/` (outputs themselves are correct on S3).
+
+**Pending (watchers armed to capture):**
+- [ ] All `profile_taxa` COMPLETED — wall-clock for the taxa phase + per-sample runtime.
+- [ ] `STRAINPHLAN:sample2markers` finished — strain marker phase duration.
 
 ## Where each timing comes from (quick map)
 
