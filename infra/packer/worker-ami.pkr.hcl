@@ -144,6 +144,18 @@ build {
     ]
   }
 
+  # Install btop (monitoring worker load during runs)
+  provisioner "shell" {
+    inline = [
+      "sudo dnf install bzip2 -y",
+      "cd /tmp",
+      "curl -fLO https://github.com/aristocratos/btop/releases/download/v1.4.0/btop-aarch64-linux-musl.tbz",
+      "tar -xf btop-aarch64-linux-musl.tbz",
+      "sudo cp btop/bin/btop /usr/local/bin/",
+      "btop --version",
+    ]
+  }
+
   # Clean up for AMI snapshot
   provisioner "shell" {
     inline = [
