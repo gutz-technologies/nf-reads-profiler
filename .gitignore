@@ -4,6 +4,8 @@ work/
 test/
 .DS_Store
 .nf-test*
+__pycache__/
+*.pyc
 ramdisk_test/keys.sh
 ramdisk_test/
 results_*
