@@ -415,6 +415,16 @@ aws ssm start-session --region us-east-2 --target <instance-id>
 # Then on the worker:
 ls /mnt/dbs/         # should show all 4 DB directories
 cat /mnt/dbs/.ami-build-timestamp
+
+# How to install btop on a worker node! copy/paste
+sudo dnf install -y make && \
+cd /tmp && \
+curl -LO https://github.com/aristocratos/btop/releases/latest/download/btop-aarch64-unknown-linux-musl.tar.gz && \
+tar -xf btop-aarch64-unknown-linux-musl.tar.gz && \
+cd btop && \
+sudo ./install.sh && \
+cd .. && \
+rm -rf btop btop-aarch64-unknown-linux-musl.tar.gz
 ```
 
 **Historical context:** before the I14 custom-AMI migration, this
