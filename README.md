@@ -49,6 +49,10 @@ that disables all FSR-enabled snapshots in the region — including any stale AM
 after a rollover. Minimum billing is 1 hour per enable-cycle regardless of how quickly
 you disable.
 
+To watch a Batch worker live (e.g. tail `/var/log/nf-userdata.log` for the boot-time
+DB copy): `aws ssm start-session --target <instance-id> --region us-east-2` — no SSH
+keys, but needs `ssm:StartSession` on your runner role (not granted by default).
+
 Samplesheets live in `s3://gutz-nf-reads-profilers-runs/samplesheets/`. See
 `samplesheets/slice.md` (also in that bucket) for how to build new slices.
 
@@ -65,6 +69,38 @@ screen -S nf-test
 vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
 nextflow run main.nf -profile test_medi -resume
 ```
+
+`screen` basics: detach with `Ctrl+A D`, reattach with `screen -r <name>`, list
+with `screen -ls`.
+
+### Profiles
+
+Profile-to-config mapping (`nextflow.config`):
+
+- `aws` → `conf/aws_batch.config` (S3 workDir, `awsbatch` executor, Graviton spot queues)
+- `azure` → `conf/azurebatch.config`
+- `test` → `conf/test.config` (local Docker, tiny `nreads`/`minreads`)
+- `test_medi` → `conf/test_medi.config` (extends `test`; enables MEDI, sets ssddbs paths, disables cleanup)
+
+### Detecting when a run has ended
+
+A finished run leaves no `nextflow run` process and no Docker containers, but
+those alone are racy. Reliable signals, in order of preference:
+
+- **`.nextflow.log`** — the definitive end marker is the final line
+  `Execution complete -- Goodbye` (preceded by `Session await > all barriers
+  passed`). Grep it: `grep -c 'Execution complete -- Goodbye' .nextflow.log`.
+  This is written for both success and failure.
+- **Console/tee output** — the pipeline prints `[SUCCESS] completed=N failed=M
+  cached=K` (or a failure summary) as its last lines. Good for at-a-glance
+  status, but only present if you teed stdout (e.g. `... | tee /tmp/run.out`).
+- **`nextflow log` / `.nextflow/history`** — the run's status column flips to
+  `OK`/`ERR` once it ends; `-` means still running or killed. Lags slightly
+  behind the log's Goodbye line.
+
+Don't rely on the `screen` session disappearing — if you launched with
+`screen -dmS name bash -c "... | tee ..."`, the session ends the instant the
+command returns, so its absence tells you nothing about success vs. failure.
 
 ### Infrastructure scripts
 
@@ -135,6 +171,29 @@ is incompatible with `skipCompleted`: skipped samples would drop from the per-ru
 clade detection and tree build, so the run errors fast if both are set.
 
 ## Databases
+
+All profiles expect pre-staged databases; nothing is downloaded at runtime.
+
+### Parameters and staging paths
+
+| Param | Purpose |
+|-------|---------|
+| `direct_metaphlan_id` / `direct_metaphlan_db` | Standalone MetaPhlAn (newer DB, e.g. `mpa_vJan25_CHOCOPhlAnSGB_202503`) |
+| `humann_metaphlan_index` / `humann_metaphlan_db` | MetaPhlAn DB matched to HUMAnN4 (e.g. `mpa_vOct22_CHOCOPhlAnSGB_202403`) |
+| `humann_chocophlan` / `humann_uniref` / `humann_utilitymap` | HUMAnN4 nucleotide/protein/mapping DBs |
+| `medi_db_path` / `medi_food_matches` / `medi_food_contents` | MEDI Kraken2+Bracken DB and food metadata |
+
+Staging paths differ per profile:
+
+- Local / `test_medi`: `/mnt/scratch/ssddbs/...` — synced from
+  `s3://cjb-gutz-s3-demo` to the instance-store RAID at `/mnt/scratch/ssddbs/`.
+  `docker.runOptions` in `nextflow.config` bind-mounts this into Docker. vJan25
+  was installed via `metaphlan --install` and is now in both ssddbs and S3.
+- AWS: `/mnt/dbs/...` — pre-baked custom AMI (Packer, see
+  `issues/I14-custom-ami-worker.md`). The `spot-metaphlan` queue instead copies
+  vJan25 from S3 at boot (see `infra/multiqueue-design.md`).
+
+### Rebuilding databases
 
 Although the databases have been stored at the appropriate `/mnt/efs/databases` location mentioned in the config file. There might come a time when these need to be updated. Here is a quick view on how to do that.
 
