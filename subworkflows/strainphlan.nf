@@ -7,7 +7,8 @@
     https://github.com/biobakery/MetaPhlAn/wiki/StrainPhlAn-4.1
 
   Steps:
-    1. sample2markers  (per sample)  SAM.bz2 -> <id>.json.bz2 consensus markers
+    1. sample2markers  (per run)     SAM.bz2 -> <id>.json.bz2 consensus markers
+                                     (all a run's SAMs in one job; .pkl loads once)
     2. print_clades    (per run)     all sample markers -> clades detectable across samples
     3. extract_markers (per run/clade) pull the chosen clade's markers from the MetaPhlAn DB
     4. strainphlan     (per run/clade) markers -> multiple-seq alignment + RAxML tree (.tre)
@@ -19,30 +20,31 @@
   Channel key throughout is `run` (the study grouping), matching the rest of the pipeline.
 */
 
-// STEP 1 — per-sample consensus markers from the MetaPhlAn SAM.
+// STEP 1 — consensus markers from MetaPhlAn SAMs, one job per run.
+// sample2markers.py loads the (large) MetaPhlAn .pkl once per invocation, so we
+// pass all of a run's SAMs to a single call (-i sam1 sam2 ...) and let it run them
+// --nprocs-parallel — instead of paying the .pkl load once per sample. cpus drives
+// --nprocs; cpus + memory set in conf/aws_batch.config.
 process sample2markers {
 
-    tag "$name"
+    tag "${run} (${sams instanceof List ? sams.size() : 1} samples)"
     container params.docker_container_metaphlan
-    // Single-threaded when run on single samples post alignment. cpus lives here, memory in config.
-    cpus 1
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/consensus_markers" }, mode: 'copy', pattern: "*.json.bz2"
 
     input:
-    tuple val(meta), path(sam)
+    tuple val(run), path(sams)
 
     output:
-    tuple val(meta), path("*.json.bz2"), emit: markers
+    tuple val(run), path("*.json.bz2"), emit: markers
 
     script:
-    name = task.ext.name ?: "${meta.id}"
-    run  = task.ext.run  ?: "${meta.run}"
     """
     sample2markers.py \\
-        -i ${sam} \\
+        -i ${sams} \\
         -o . \\
         -d ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
-        --input_format bz2
+        --input_format bz2 \\
+        --nprocs ${task.cpus}
     """
 }
 
@@ -153,13 +155,15 @@ workflow STRAINPHLAN {
         sams   // channel of [meta, sam.bz2] from profile_taxa.out.sam
 
     main:
-        // STEP 1: per-sample markers
-        sample2markers(sams)
-
-        // Group every sample's markers by run.
-        markers_by_run = sample2markers.out.markers
-            .map { meta, markers -> [ meta.run, markers ] }
+        // STEP 1: all of a run's SAMs in one sample2markers job, so the .pkl loads
+        // once per run and samples run --nprocs-parallel.
+        sams_by_run = sams
+            .map { meta, sam -> [ meta.run, sam ] }
             .groupTuple()
+
+        sample2markers(sams_by_run)
+
+        markers_by_run = sample2markers.out.markers
 
         // STEP 2: which clades are shared across the run's samples
         print_clades(markers_by_run)
