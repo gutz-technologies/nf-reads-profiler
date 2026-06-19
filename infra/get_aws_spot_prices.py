@@ -4,10 +4,10 @@
 Helps pick instance types for the Batch queues (e.g. spot-metaphlan). Lists every
 in-region instance type in the requested families, pulls the cheapest current spot
 price across AZs, joins in AWS's public Spot Advisor interruption-frequency data,
-and ranks by value. Defaults to the Graviton4 r8g memory family.
+and ranks by value. Defaults to all Graviton4 (8g) families in the region.
 
-  ./get_aws_spot_prices.py                       # r8g family, us-east-2, by $/vCPU
-  ./get_aws_spot_prices.py -f r8g m8g c8g        # compare families
+  ./get_aws_spot_prices.py                       # all Graviton4 families, us-east-2, by $/vCPU
+  ./get_aws_spot_prices.py -f r8g m8g c8g        # only these families
   ./get_aws_spot_prices.py --sort gb             # rank by $/GB instead
 """
 
@@ -19,7 +19,16 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULT_REGION = "us-east-2"
-DEFAULT_FAMILIES = ["r8g", "r8gd", "r8gn", "r8gb", "r8gdb", "r8gdn"]
+# All Graviton4 ("8g") families AWS offers in us-east-2 (verified via
+# describe-instance-types). c8g=compute, m8g=general, r8g=memory, x8g=high-mem,
+# i8g/i8ge=storage; d=local NVMe, n=high network.
+DEFAULT_FAMILIES = [
+    "c8g", "c8gd", "c8gn",
+    "m8g", "m8gd",
+    "r8g", "r8gd",
+    "x8g",
+    "i8g", "i8ge",
+]
 PRODUCT = "Linux/UNIX"
 SPOT_ADVISOR_URL = "https://spot-bid-advisor.s3.amazonaws.com/spot-advisor-data.json"
 
@@ -125,10 +134,11 @@ def main():
 
     print(f"# Graviton spot prices — {args.region} — families: {' '.join(args.families)} "
           f"(sorted by ${'/vCPU' if args.sort == 'vcpu' else '/GB' if args.sort == 'gb' else '/hr'})")
-    print("TYPE,vCPU,MemGiB,Spot$/hr,$/GB,$/vCPU,Interrupt,Savings%")
+    print("TYPE,Family,vCPU,MemGiB,Spot$/hr,$/GB,$/vCPU,Interrupt,Savings%")
     for itype, vcpu, memgib, price, pergb, percpu, interrupt, savings in rows:
         sav = f"{savings}" if savings is not None else "?"
-        print(f"{itype},{vcpu},{memgib:.1f},{price:.4f},{pergb:.5f},{percpu:.5f},{interrupt},{sav}")
+        fam = itype.split(".", 1)[0]
+        print(f"{itype},{fam},{vcpu},{memgib:.1f},{price:.4f},{pergb:.5f},{percpu:.5f},{interrupt},{sav}")
 
 
 if __name__ == "__main__":
