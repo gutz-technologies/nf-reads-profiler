@@ -62,7 +62,7 @@ def load_eviction_rates(region):
     live probability, but it's the only signal AWS publishes per instance type.
     """
     try:
-        with urllib.request.urlopen(SPOT_ADVISOR_URL, timeout=10) as resp:
+        with urllib.request.urlopen(SPOT_ADVISOR_URL, timeout=30) as resp:
             data = json.load(resp)
     except Exception as e:
         print(f"WARNING: spot advisor data unavailable ({e})", file=sys.stderr)
