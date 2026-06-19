@@ -778,11 +778,12 @@ Resources:
   # contention. One box fits 6 profile_taxa jobs (96 vCPU / 16 cpus each), all
   # sharing the single staged vJan25 copy on that instance.
   #
-  # TRADE-OFF: single instance type = single spot pool, no SPOT_CAPACITY_OPTIMIZED
-  # depth to fall back on if that pool goes dry (this bit us 2026-06-18 with only
-  # m8g/r8g .4xlarge — pools went dry, workers reclaimed before boot+copy
-  # finished). Accepted here for this 20-sample rerun; revisit (add r8g.8xlarge /
-  # r8gd.metal-24xl as fallback pools) if metal capacity proves flaky at scale.
+  # SPOT-POOL DEPTH: three 96-vCPU bare-metal pools (r8g/m8g/c8g .metal-24xl) so
+  # SPOT_CAPACITY_OPTIMIZED has fallbacks if one pool goes dry (a single pool bit
+  # us 2026-06-18: m8g/r8g .4xlarge pools went dry, workers reclaimed before
+  # boot+copy finished). All three are 96 vCPU = 6 profile_taxa jobs/VM (16 cpus
+  # each); they differ only in RAM (768/384/192 GB), all ample for the staged
+  # vJan25 copy. r8g.metal-24xl stays the preferred pick on $/vCPU + interruption.
   SpotMetaphlanComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -798,6 +799,8 @@ Resources:
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
           - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
+          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
         LaunchTemplate:
           LaunchTemplateId: !Ref MetaphlanWorkerLaunchTemplate
           Version: $Latest
