@@ -20,19 +20,21 @@
   Channel key throughout is `run` (the study grouping), matching the rest of the pipeline.
 */
 
-// STEP 1 — consensus markers from MetaPhlAn SAMs, one job per run.
-// sample2markers.py loads the (large) MetaPhlAn .pkl once per invocation, so we
-// pass all of a run's SAMs to a single call (-i sam1 sam2 ...) and let it run them
-// --nprocs-parallel — instead of paying the .pkl load once per sample. cpus drives
-// --nprocs; cpus + memory set in conf/aws_batch.config.
+// STEP 1 — consensus markers from MetaPhlAn SAMs, in fixed-size sample batches.
+// sample2markers.py loads the (large) MetaPhlAn .pkl once per invocation and runs
+// the batch's SAMs --nprocs-parallel. The workflow chunks each run into batches (see
+// STRAINPHLAN main) so a single job never scales with run size — runtime and
+// spot-reclaim blast radius stay bounded. Output is per-sample and identical
+// regardless of how SAMs are batched. cpus drives --nprocs; cpus + memory in
+// conf/aws_batch.config.
 process sample2markers {
 
-    tag "${run} (${sams instanceof List ? sams.size() : 1} samples)"
+    tag "${run} batch ${batch} (${sams instanceof List ? sams.size() : 1} samples)"
     container params.docker_container_metaphlan
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/consensus_markers" }, mode: 'copy', pattern: "*.json.bz2"
 
     input:
-    tuple val(run), path(sams)
+    tuple val(run), val(batch), path(sams)
 
     output:
     tuple val(run), path("*.json.bz2"), emit: markers
@@ -158,15 +160,26 @@ workflow STRAINPHLAN {
         sams   // channel of [meta, sam.bz2] from profile_taxa.out.sam
 
     main:
-        // STEP 1: all of a run's SAMs in one sample2markers job, so the .pkl loads
-        // once per run and samples run --nprocs-parallel.
-        sams_by_run = sams
+        // STEP 1: gather each run's SAMs, then chop into fixed-size batches of 10 so a
+        // single sample2markers job never grows with run size. collate(10) splits each
+        // run's list into <=10-sample chunks; flatMap emits one (run, batch_idx, chunk)
+        // tuple per chunk -> one parallel job each. Batches stay within a run so each
+        // output marker tags back to the right run.
+        sams_batched = sams
             .map { meta, sam -> [ meta.run, sam ] }
             .groupTuple()
+            .flatMap { run, sms ->
+                sms.collate(10).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
+            }
 
-        sample2markers(sams_by_run)
+        sample2markers(sams_batched)
 
+        // Recombine every batch's per-sample markers back into one list per run for the
+        // print_clades reduce. groupTuple gathers chunks by run -> [run, [[..],[..]]];
+        // flatten() collapses the per-batch lists into a single flat marker list.
         markers_by_run = sample2markers.out.markers
+            .groupTuple()
+            .map { run, markers -> tuple(run, markers.flatten()) }
 
         // STEP 2: which clades are shared across the run's samples
         print_clades(markers_by_run)
