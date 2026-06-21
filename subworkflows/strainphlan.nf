@@ -38,6 +38,9 @@ process sample2markers {
     tuple val(run), path("*.json.bz2"), emit: markers
 
     script:
+    // MEMORY: --nprocs loads the DB once, but still needs a full copy per thread.
+    // Measured at 13.2 GB * threads for metaphlan vJan25. Make sure threads don't
+    // exceed the memory! Size cpus/memory together in conf/aws_batch.config.
     """
     sample2markers.py \\
         -i ${sams} \\
