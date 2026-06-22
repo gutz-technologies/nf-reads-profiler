@@ -238,7 +238,7 @@ cat <<EOF
   Wallclock:          ${WALLCLOCK_SEC}s ($((WALLCLOCK_SEC / 60))m $((WALLCLOCK_SEC % 60))s)
   S3 workdir delta:   $(fmt_bytes "$WORKDIR_DELTA") (pre=$(fmt_bytes "$PRE_WORKDIR_BYTES"), post=$(fmt_bytes "$POST_WORKDIR_BYTES"))
   S3 results size:    $(fmt_bytes "$RESULTS_BYTES")
-  Reports (local):    results_local_logs/${PROJECT}/reports/
+  Reports (S3):       ${OUTDIR}/${PROJECT}/reports/   # report.html + trace.txt, timestamped
   Results (S3):       ${OUTDIR}/${PROJECT}/
 
   Cost data is NOT captured here — query Cost Explorer for the

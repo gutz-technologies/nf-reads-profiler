@@ -249,7 +249,7 @@ cat <<EOF
   S3 workdir delta:   $(fmt_bytes "$WORKDIR_DELTA")
   S3 results size:    $(fmt_bytes "$RESULTS_BYTES")
   Results (S3):       ${OUTDIR}/${PROJECT}/
-  Reports (local):    results_local_logs/${PROJECT}/reports/
+  Reports (S3):       ${OUTDIR}/${PROJECT}/reports/   # report.html + trace.txt, timestamped
 
   Remember: run infra/packer/disable-fsr.sh after this run completes.
 EOF

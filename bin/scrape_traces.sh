@@ -4,7 +4,12 @@
 # summarized by process then date.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../results_local_logs" && pwd)"
+# Trace files now land on S3 at <outdir>/<project>/reports/<ts>_trace.txt (was
+# ../results_local_logs before reports moved to S3). The runs bucket is FUSE-mounted
+# on the runner VM, so point at that mount. Pass a different results root as $1.
+# The <project>/reports/<trace> layout is unchanged, so the project-from-path logic below still holds.
+SCRIPT_DIR="${1:-/home/ubuntu/gutz-nf-reads-profilers-runs/results}"
+[ -d "$SCRIPT_DIR" ] || { echo "results dir not found: $SCRIPT_DIR (pass one as \$1)" >&2; exit 1; }
 
 RAW=$(mktemp --suffix=.tsv)
 CUT=$(mktemp --suffix=.tsv)
