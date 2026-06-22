@@ -122,7 +122,7 @@ combines → project-wide biom rollup. Layout below was verified against a real
 outdir/<project>/<run>/
   ├── readcount/<id>_readcount.txt          # read count per sample
   ├── taxa/<id>_metaphlan.biom              # MetaPhlAn4 profile per sample
-  ├── function/                             # HUMAnN4, per sample (skipped if --skipHumann)
+  ├── function/                             # HUMAnN4, per sample (only if --enable_humann, default true)
   │     ├── <id>_0.log
   │     ├── <id>_1_metaphlan_profile.tsv    # HUMAnN-internal MetaPhlAn
   │     ├── <id>_2_genefamilies.tsv
@@ -192,72 +192,3 @@ Staging paths differ per profile:
 - AWS: `/mnt/dbs/...` — pre-baked custom AMI (Packer, see
   `issues/I14-custom-ami-worker.md`). The `spot-metaphlan` queue instead copies
   vJan25 from S3 at boot (see `infra/multiqueue-design.md`).
-
-### Rebuilding databases
-
-Although the databases have been stored at the appropriate `/mnt/efs/databases` location mentioned in the config file. There might come a time when these need to be updated. Here is a quick view on how to do that.
-
-### Metaphlan4
-
-```{bash}
-cd /mnt/efs/databases/Biobakery/Metaphlan/v4.0
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-    metaphlan \
-        --install \
-        --nproc 4 \
-        --bowtie2db .
-```
-
-### Humann3
-
-This requires 3 databases.
-
-#### Chocophlan
-
-```{bash}
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-        humann_databases \
-        --download \
-            chocophlan full .
-```
-
-This will create a subdirectory `chocophlan`, and download and extract the database here.
-
-#### Uniref
-
-```{bash}
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-        humann_databases \
-        --download \
-        uniref uniref90_diamond .
-```
-
-This will create a subdirectory `uniref`, and download and extract the database here.
-
-#### Utility Script Databases
-
-```bash
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-    humann_databases \
-        --download \
-        utility_mapping full .
-```

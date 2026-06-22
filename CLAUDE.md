@@ -56,7 +56,7 @@ TSVs already exist in `outdir/project/run/function/` — used to skip samples on
 resume-style reruns.
 
 The HUMAnN biom-conversion branch (`split_stratified_tables` →
-`convert_tables_to_biom`) is **active** for every non-`skipHumann` run (enabled
+`convert_tables_to_biom`) is **active** for every `enable_humann` run (enabled
 in `57da5a3`, 2026-05-12, which removed the old `params.annotation` gate). It
 runs after `combine_humann_tables`: splits each combined TSV into
 stratified/unstratified, then converts every (type × stratification) to `.biom`
@@ -117,7 +117,7 @@ the block is parsed. Consequences:
 
 Defined in `nextflow.config`:
 
-- `skipHumann` (default false) — skip functional profiling and all HUMAnN combine/split steps.
+- `enable_humann` (default true) — run functional profiling and all HUMAnN combine/split steps.
 - `singleEnd`, `mergeReads`, `nreads` (32,000,000 cap), `minreads` (100,000 floor; samples below this are logged and dropped, not failed).
 - `process_humann_tables`, `humann_regroups` (e.g. `"uniref90_ko,uniref90_rxn"`), `split_size` — used by the currently-disabled regroup branch.
 - `humann_params` — passthrough (test profile sets `--bypass-translated-search`).

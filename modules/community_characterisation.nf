@@ -94,7 +94,7 @@ process profile_function {
   tuple val(meta), path("${name}_humann_temp/${name}_bowtie2_unaligned.fa"), emit: unmapped_reads, optional: true
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   name = task.ext.name ?: "${meta.id}"
@@ -143,7 +143,7 @@ process combine_humann_tables {
   tuple val(meta), path('*_combined.tsv')
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
 
@@ -269,7 +269,7 @@ process convert_tables_to_biom {
   tuple val(meta), path("*.biom"), emit: biom_files
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -336,7 +336,7 @@ process split_stratified_tables {
   tuple val(meta), path("*_unstratified.tsv"), emit: unstratified_tables
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -371,7 +371,7 @@ process regroup_genefamilies {
   tuple val(meta), path("*.biom"), emit: regrouped_bioms
 
   when:
-  !params.skipHumann && params.humann_regroup && meta.type == 'genefamilies'
+  params.enable_humann && params.humann_regroup && meta.type == 'genefamilies'
 
   script:
   run = task.ext.run ?: "${meta.run}"
