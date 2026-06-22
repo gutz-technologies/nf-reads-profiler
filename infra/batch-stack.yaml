@@ -68,13 +68,14 @@ Parameters:
 
   MaxvCPUsHumann:
     Type: Number
-    Default: 100
+    Default: 600
     Description: >
       Maximum vCPUs for the spot-humann compute environment (profile_function).
-      Spot-only; no on-demand fallback. Capped just above one r8g.metal-24xl
-      (96 vCPU) so Batch launches exactly one bare-metal VM (192 > 100) for
-      validation. Raise for the function phase of large runs — this is the
-      long-pole of a full run, so it wants several boxes at scale.
+      Spot-only; no on-demand fallback. profile_function is the long-pole of a
+      full run, so this is sized for several bare-metal boxes in parallel: 600
+      vCPU = up to ~3x c8g.metal-48xl (192) or ~6x *.metal-24xl (96), i.e.
+      ~36 concurrent HUMAnN jobs (16 cpus each). Measured ~45 min/job, so this
+      clears a 2098-sample cohort in <2 days vs ~11 days on a single box.
 
   # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/monitoring-stack.yaml
   # (budget, SNS topic, and alarms live there now).
@@ -549,6 +550,7 @@ Resources:
               VolumeSize: 500
               VolumeType: gp3
               Iops: 9000            # 3x default (3000→9000); gp3 max is 16000
+              Throughput: 1000      # gp3 max; default is only 125 MB/s — speeds fasterq-dump scratch writes
               DeleteOnTermination: true
               Encrypted: true
         UserData:
@@ -609,6 +611,7 @@ Resources:
               VolumeSize: 200          # vJan25 ~44 GB + MetaPhlAn scratch; far less than the 500 GB ingest worker
               VolumeType: gp3
               Iops: 9000
+              Throughput: 1000         # gp3 max; default 125 MB/s pins the boot-time vJan25 S3 sync
               DeleteOnTermination: true
               Encrypted: true
         UserData:
@@ -646,6 +649,9 @@ Resources:
             # drop these --exclude flags.
             DEST=/mnt/dbs/metaphlan_databases/vJan25
             mkdir -p "$DEST"
+            # Raise S3 parallelism to match the gp3 Throughput bump (1000 MB/s).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
             echo "=== Copying ${MetaphlanDbS3Uri} -> $DEST (excluding _SGB.fna*) ==="
             if ! time "$AWS" s3 cp --recursive --only-show-errors \
                  --exclude "*_SGB.fna" --exclude "*_SGB.fna.bz2" \
@@ -693,6 +699,7 @@ Resources:
               VolumeSize: 300          # ~65 GB HUMAnN DBs + per-job HUMAnN scratch (12 concurrent jobs)
               VolumeType: gp3
               Iops: 12000              # higher than metaphlan's 9000 — the 30k-object chocophlan write is IOPS-bound
+              Throughput: 1000         # gp3 max; default 125 MB/s pins the ~65 GiB boot-time HUMAnN DB sync
               DeleteOnTermination: true
               Encrypted: true
         UserData:
@@ -725,8 +732,11 @@ Resources:
             # 2. Copy the four HUMAnN DBs from S3 (SYNCHRONOUS — gates ECS
             # registration). Same single `s3 sync` + include-filter form the baked
             # AMI uses (infra/packer/worker-ami.pkr.hcl), scoped to vOct22 (not
-            # vJan25). chocophlan = ~30k objects, so raise concurrency first.
-            "$AWS" configure set default.s3.max_concurrent_requests 64
+            # vJan25). chocophlan = ~30k objects, so raise concurrency first
+            # (object-count/latency bound, not throughput — this is what speeds
+            # the small-object tail; the gp3 Throughput bump speeds the bulk files).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
             mkdir -p /mnt/dbs
             echo "=== Syncing HUMAnN DBs from s3://${DbSourceBucket} -> /mnt/dbs ==="
             if ! time "$AWS" s3 sync "s3://${DbSourceBucket}/" /mnt/dbs/ \
@@ -877,6 +887,11 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
+          # NOTE: c8g.metal-48xl (192 vCPU) is INERT here while MaxvCPUsMetaphlan=100
+          # — Batch won't launch an instance whose vCPUs exceed the cap (192 > 100).
+          # Staged for if/when the metaphlan cap is raised; today only the 96-vCPU
+          # types below can launch.
+          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — only usable if cap raised >192
           - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
           - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
@@ -913,6 +928,7 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
+          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — 12 HUMAnN jobs/VM (16 cpus each); best $/job at cap 600
           - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
           - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
