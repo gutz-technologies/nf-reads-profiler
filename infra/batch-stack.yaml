@@ -696,7 +696,7 @@ Resources:
         BlockDeviceMappings:
           - DeviceName: /dev/xvda
             Ebs:
-              VolumeSize: 300          # ~65 GB HUMAnN DBs + per-job HUMAnN scratch (12 concurrent jobs)
+              VolumeSize: 500          # ~65 GB HUMAnN DBs + retained humann_temp x up to 12 concurrent jobs (c8g.metal-48xl); 300 was too tight once --remove-temp-output was dropped
               VolumeType: gp3
               Iops: 12000              # higher than metaphlan's 9000 — the 30k-object chocophlan write is IOPS-bound
               Throughput: 1000         # gp3 max; default 125 MB/s pins the ~65 GiB boot-time HUMAnN DB sync
