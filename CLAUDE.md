@@ -66,17 +66,30 @@ gated on `params.humann_regroup` (off by default).
 
 ## AWS Batch infra
 
-Managed by a single CloudFormation template: `infra/batch-stack.yaml`. Stack
-name `nf-reads-profiler-batch`, region `us-east-2`, account `730883236839`.
-All compute is **Graviton (ARM64)** — runner and workers both. Two job queues:
+Managed by two CloudFormation templates: `infra/batch-stack.yaml` (compute —
+stack `nf-reads-profiler-batch`) and `infra/monitoring-stack.yaml`
+(observability: SNS topic, alarms, EventBridge→Lambda metric publishers,
+dashboard, budget — stack `nf-reads-profiler-monitoring`, split out at the
+51 KB inline-template limit; imports the compute stack's queue-ARN exports, so
+deploy compute first). Lint both with `cfn-lint infra/*.yaml` (no size limit,
+unlike `validate-template`); `/deploy-stack` deploys both in order. Region
+`us-east-2`, account `730883236839`.
+All compute is **Graviton (ARM64)** — runner and workers both. Three job queues
+(`spot-queue`, `spot-metaphlan`, `spot-humann`):
 
-- `spot-queue` — default for all DB-free jobs (count/clean/combine/multiqc).
-  Two CEs: spot (primary) + on-demand (fallback). Backed by the custom baked AMI.
+- `spot-queue` — default for all DB-free glue jobs (count/clean/combine/multiqc/
+  SRA ingest). Two CEs: spot (primary) + on-demand (fallback). Now uses the thin
+  stock AMI (awscli only, no DBs, no FSR) since no DB-bound jobs route here.
 - `spot-metaphlan` — `profile_taxa` + `STRAINPHLAN:*` only (routed via
   `withName ... queue =` in `conf/aws_batch.config`). Spot-only, single CE,
   thin stock AMI that copies vJan25 from S3 at boot (~3–5 min/instance, no FSR,
-  no Packer rebuild). The per-database-queue pattern (and the planned
-  `spot-humann` / `spot-medi`) is documented in `infra/multiqueue-design.md`.
+  no Packer rebuild).
+- `spot-humann` — `profile_function` only. Spot-only, single CE, thin AMI that
+  syncs the HUMAnN DB set (~65 GiB) from S3 at boot. The per-database-queue
+  pattern (and the planned `spot-medi`) is documented in
+  `infra/multiqueue-design.md`. NOTE: with all three queues on thin AMIs, the
+  baked-DB custom AMI (`EcsAmiId`) and its FSR/Packer pipeline are now orphaned
+  — candidate for removal.
 
 Two S3 buckets:
 

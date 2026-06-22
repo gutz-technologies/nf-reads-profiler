@@ -33,17 +33,22 @@ echo "AMI: $AMI_ID"
 
 Show the AMI ID to the user for confirmation before proceeding.
 
-### 2. Validate the template
+### 2. Validate the templates
+
+Use `cfn-lint` (no 51 KB inline limit, stricter than `validate-template`):
 
 ```bash
-aws cloudformation validate-template \
-  --template-body file://infra/batch-stack.yaml \
-  --region us-east-2
+cfn-lint infra/batch-stack.yaml infra/monitoring-stack.yaml
 ```
 
-If validation fails, stop and report the error.
+If linting fails, stop and report the error. (A `W2001 EcsAmiId not used`
+warning on batch-stack.yaml is expected — the baked-DB AMI is being retired;
+the param is still passed below but no longer referenced.)
 
-### 3. Deploy the stack
+### 3. Deploy the compute stack
+
+Budget/alarm/dashboard resources moved to monitoring-stack.yaml (step 4b), so
+`BudgetAlertEmail`/`MonthlyBudgetThreshold` are NOT passed here anymore.
 
 ```bash
 aws cloudformation deploy \
@@ -56,8 +61,6 @@ aws cloudformation deploy \
     SubnetIds="subnet-09159c654acc505a3,subnet-03afe111356916511,subnet-0d0f1d152c1656677" \
     WorkDirBucketName=gutz-nf-reads-profilers-workdir \
     RunsBucketName=gutz-nf-reads-profilers-runs \
-    BudgetAlertEmail=colin@vasogo.com \
-    MonthlyBudgetThreshold=200 \
     SpotBidPercentage=50 \
     MaxvCPUsSpot=256 \
     MaxvCPUsOnDemand=0 \
@@ -72,6 +75,33 @@ aws cloudformation deploy \
 ```bash
 aws cloudformation wait stack-update-complete \
   --stack-name nf-reads-profiler-batch \
+  --region us-east-2
+```
+
+### 4b. Deploy the monitoring stack
+
+The observability subsystem (SNS topic, alarms, the EventBridge→Lambda metric
+publishers, the multi-queue dashboard, and the monthly budget) lives in a
+separate stack that imports the compute stack's queue-ARN exports. Deploy it
+AFTER the compute stack so those exports exist. It is independent — a
+dashboard/alarm change can be re-deployed with just this command, no compute
+churn.
+
+```bash
+aws cloudformation deploy \
+  --stack-name nf-reads-profiler-monitoring \
+  --template-file infra/monitoring-stack.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-2 \
+  --parameter-overrides \
+    BatchStackName=nf-reads-profiler-batch \
+    ProjectTag=nf-reads-profiler \
+    EnvironmentTag=development \
+    BudgetAlertEmail=colin@vasogo.com \
+    MonthlyBudgetThreshold=200
+
+aws cloudformation wait stack-update-complete \
+  --stack-name nf-reads-profiler-monitoring \
   --region us-east-2
 ```
 

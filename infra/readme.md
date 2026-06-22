@@ -146,6 +146,16 @@ aws ec2 describe-subnets --filters "Name=defaultForAz,Values=true" \
 
 ## Part 2: Deploy the Stack
 
+> **Two CloudFormation stacks.** Compute lives in `infra/batch-stack.yaml`
+> (stack `nf-reads-profiler-batch`); the observability subsystem — SNS topic,
+> alarms, the EventBridge→Lambda metric publishers, the multi-queue dashboard,
+> and the monthly budget — was split into `infra/monitoring-stack.yaml`
+> (stack `nf-reads-profiler-monitoring`) when the compute template crossed the
+> 51 KB inline-template limit. The monitoring stack imports the compute stack's
+> queue-ARN exports, so deploy `batch-stack` **first**. `/deploy-stack` does
+> both in order. Dashboard/alarm tweaks can redeploy `monitoring-stack` alone,
+> no compute churn. Lint both with `cfn-lint infra/*.yaml`.
+
 ### 1. Validate + deploy (use the `/deploy-stack` skill)
 
 The deploy mechanics — validate, deploy, wait for CFN, force compute

@@ -1,0 +1,517 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Observability stack for nf-reads-profiler AWS Batch. Split out of
+  batch-stack.yaml (which crossed the 51 KB inline-template limit). Contains the
+  SNS alarm topic, CloudWatch alarms, the EventBridge->Lambda pipeline that
+  publishes AWS/Batch job metrics (Batch does not emit them natively), the
+  multi-queue CloudWatch dashboard, and the monthly budget.
+
+  Coupling is one-directional: this stack imports the three job-queue ARNs that
+  batch-stack.yaml exports (<BatchStackName>-SpotQueueArn / -MetaphlanQueueArn /
+  -HumannQueueArn). Deploy batch-stack.yaml FIRST. Updating dashboards/alarms
+  here never touches live compute.
+
+Parameters:
+  BatchStackName:
+    Type: String
+    Default: nf-reads-profiler-batch
+    Description: >
+      Name of the compute stack whose queue-ARN exports this stack imports.
+      Must match the deployed batch-stack.yaml stack name.
+
+  ProjectTag:
+    Type: String
+    Default: nf-reads-profiler
+    Description: Value for Project cost-allocation tag applied to all resources
+
+  EnvironmentTag:
+    Type: String
+    Default: development
+    AllowedValues: [production, staging, development]
+    Description: Value for Environment tag applied to all resources
+
+  BudgetAlertEmail:
+    Type: String
+    Description: Email address for budget and CloudWatch alarm notifications
+
+  MonthlyBudgetThreshold:
+    Type: Number
+    Default: 200
+    Description: Monthly AWS spend alert threshold in USD (alerts fire at 80% actual and 100% forecasted)
+
+Resources:
+
+# ---------------------------------------------------------------------------
+# SNS — alarm and budget notifications
+# ---------------------------------------------------------------------------
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectTag}-alerts"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref BudgetAlertEmail
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+# ---------------------------------------------------------------------------
+# CloudWatch Alarms
+# ---------------------------------------------------------------------------
+
+  # Fires when 5+ jobs fail within 5 minutes — indicates a systemic issue
+  # (bad container image, IAM permission error, etc.) vs. normal spot interruptions
+  # which are handled transparently by maxRetries=3 in aws_batch.config.
+  FailedJobsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectTag}-batch-failed-jobs"
+      AlarmDescription: "5+ Batch jobs failed in 5 minutes on spot-queue. Likely a systemic issue rather than spot interruptions (those are retried automatically)."
+      Namespace: AWS/Batch
+      MetricName: FailedJobCount
+      Dimensions:
+        - Name: JobQueue
+          Value:
+            Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # Fires when many jobs are stuck RUNNABLE — indicates spot capacity is
+  # exhausted AND the on-demand fallback CE is also full or hitting the
+  # MaxvCPUsOnDemand cap. Operator action: raise MaxvCPUsOnDemand or
+  # check spot interruption rate. Tracks the RunnableJobCount gauge
+  # emitted by BatchQueueDepthFunction (issue I17).
+  RunnableJobsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectTag}-batch-high-runnable"
+      AlarmDescription: "10+ jobs stuck RUNNABLE on spot-queue for 15+ minutes. Spot capacity exhausted and on-demand vCPU limit reached. Consider raising MaxvCPUsOnDemand."
+      Namespace: AWS/Batch
+      MetricName: RunnableJobCount
+      Dimensions:
+        - Name: JobQueue
+          Value:
+            Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+# ---------------------------------------------------------------------------
+# Batch Job Metrics — EventBridge → Lambda → CloudWatch
+# Publishes SucceededJobCount, FailedJobCount, etc. to AWS/Batch namespace.
+# AWS Batch does not emit these metrics automatically; this is the back-end
+# that feeds the dashboard below. The event-driven function reads jobQueue
+# straight off the Batch event, so it covers ALL queues automatically.
+# ---------------------------------------------------------------------------
+
+  BatchMetricsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectTag}-batch-metrics-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PutBatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: AWS/Batch
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  BatchMetricsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectTag}-batch-metrics"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt BatchMetricsLambdaRole.Arn
+      Timeout: 10
+      Code:
+        ZipFile: |
+          import boto3
+
+          cw = boto3.client('cloudwatch')
+
+          # Event-driven counters: emit value=1 per state-transition. Sum
+          # aggregation gives a "throughput in window" metric. Only kept
+          # for terminal states; queue-depth gauges (RUNNABLE, RUNNING,
+          # etc.) are emitted by the scheduled BatchQueueDepthFunction
+          # below as actual depths via list-jobs. See issue I17.
+          METRIC_MAP = {
+              'SUCCEEDED': 'SucceededJobCount',
+              'FAILED':    'FailedJobCount',
+          }
+
+          def handler(event, context):
+              detail = event.get('detail', {})
+              status = detail.get('status')
+              job_queue = detail.get('jobQueue')  # full ARN from Batch events
+              metric = METRIC_MAP.get(status)
+              if not metric or not job_queue:
+                  return
+              cw.put_metric_data(
+                  Namespace='AWS/Batch',
+                  MetricData=[{
+                      'MetricName': metric,
+                      'Dimensions': [{'Name': 'JobQueue', 'Value': job_queue}],
+                      'Value': 1,
+                      'Unit': 'Count',
+                  }]
+              )
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  BatchJobStateRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectTag}-batch-job-state-change"
+      Description: "Capture Batch job state changes and publish counts to CloudWatch AWS/Batch namespace"
+      EventPattern:
+        source:
+          - aws.batch
+        detail-type:
+          - Batch Job State Change
+      State: ENABLED
+      Targets:
+        - Id: BatchMetricsLambda
+          Arn: !GetAtt BatchMetricsFunction.Arn
+
+  BatchMetricsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt BatchMetricsFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BatchJobStateRule.Arn
+
+# ---------------------------------------------------------------------------
+# Batch Queue Depth — scheduled poll → CloudWatch (issue I17)
+# Replaces the broken event-driven RunnableJobCount with an actual depth
+# gauge polled every 60s via list-jobs. The previous design emitted
+# value=1 per state-change event, which gave the alarm at most "1" to
+# look at; with this Lambda the alarm sees real queue depth.
+# Polls ALL THREE queues (spot-queue, spot-metaphlan, spot-humann) so the
+# per-queue dashboard depth widgets populate, not just spot-queue.
+# ---------------------------------------------------------------------------
+
+  BatchQueueDepthLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectTag}-batch-queue-depth-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PollAndPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: batch:ListJobs
+                Resource: '*'
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: AWS/Batch
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  BatchQueueDepthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectTag}-batch-queue-depth"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt BatchQueueDepthLambdaRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          # Comma-separated job-queue ARNs. list_jobs accepts an ARN for
+          # jobQueue, and the same ARN is the CloudWatch JobQueue dimension.
+          QUEUE_ARNS: !Join
+            - ","
+            - - Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
+              - Fn::ImportValue: !Sub "${BatchStackName}-MetaphlanQueueArn"
+              - Fn::ImportValue: !Sub "${BatchStackName}-HumannQueueArn"
+      Code:
+        ZipFile: |
+          import os
+          import boto3
+
+          batch = boto3.client('batch')
+          cw    = boto3.client('cloudwatch')
+
+          QUEUE_ARNS = [q for q in os.environ['QUEUE_ARNS'].split(',') if q]
+
+          # Live queue-depth gauges. Emitted as actual counts (not value=1)
+          # so Maximum/Average aggregation gives the real backlog.
+          STATUSES = {
+              'SUBMITTED': 'SubmittedJobCount',
+              'PENDING':   'PendingJobCount',
+              'RUNNABLE':  'RunnableJobCount',
+              'STARTING':  'StartingJobCount',
+              'RUNNING':   'RunningJobCount',
+          }
+
+          def count_jobs(queue, status):
+              count, token = 0, None
+              while True:
+                  kwargs = {'jobQueue': queue, 'jobStatus': status, 'maxResults': 100}
+                  if token:
+                      kwargs['nextToken'] = token
+                  resp = batch.list_jobs(**kwargs)
+                  count += len(resp['jobSummaryList'])
+                  token = resp.get('nextToken')
+                  if not token:
+                      break
+              return count
+
+          def handler(event, context):
+              metric_data = []
+              for queue in QUEUE_ARNS:
+                  for status, metric in STATUSES.items():
+                      metric_data.append({
+                          'MetricName': metric,
+                          'Dimensions': [{'Name': 'JobQueue', 'Value': queue}],
+                          'Value': count_jobs(queue, status),
+                          'Unit': 'Count',
+                      })
+              # PutMetricData caps at 1000 metrics/call; 3 queues x 5 statuses = 15.
+              cw.put_metric_data(Namespace='AWS/Batch', MetricData=metric_data)
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref EnvironmentTag
+
+  BatchQueueDepthScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectTag}-batch-queue-depth-schedule"
+      Description: "Poll Batch queue depth every 60s and publish to CloudWatch."
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: BatchQueueDepthLambda
+          Arn: !GetAtt BatchQueueDepthFunction.Arn
+
+  BatchQueueDepthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt BatchQueueDepthFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BatchQueueDepthScheduleRule.Arn
+
+# ---------------------------------------------------------------------------
+# CloudWatch Dashboard
+# ---------------------------------------------------------------------------
+
+  BatchDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${ProjectTag}-batch"
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0, "y": 0, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Job Status — spot-queue (glue)",
+                  "metrics": [
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueueArn}", {"color": "#d62728", "label": "Failed"}],
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#9467bd", "label": "Starting"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#17becf", "label": "Running"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 8, "y": 0, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Job Status — spot-metaphlan (profile_taxa + StrainPhlAn)",
+                  "metrics": [
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MetaphlanQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MetaphlanQueueArn}", {"color": "#d62728", "label": "Failed"}],
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#9467bd", "label": "Starting"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#17becf", "label": "Running"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 16, "y": 0, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Job Status — spot-humann (profile_function)",
+                  "metrics": [
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${HumannQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${HumannQueueArn}", {"color": "#d62728", "label": "Failed"}],
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#9467bd", "label": "Starting"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#17becf", "label": "Running"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
+                "type": "alarm",
+                "x": 0, "y": 6, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Active Alarms",
+                  "alarms": [
+                    "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-failed-jobs",
+                    "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-high-runnable"
+                  ]
+                }
+              },
+              {
+                "type": "metric",
+                "x": 8, "y": 6, "width": 16, "height": 6,
+                "properties": {
+                  "title": "Succeeded / Failed — all queues (hourly)",
+                  "metrics": [
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueueArn}",     {"color": "#2ca02c", "label": "spot-queue ✓"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueueArn}",     {"color": "#d62728", "label": "spot-queue ✗"}],
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MetaphlanQueueArn}", {"color": "#98df8a", "label": "metaphlan ✓"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MetaphlanQueueArn}", {"color": "#ff9896", "label": "metaphlan ✗"}],
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${HumannQueueArn}",    {"color": "#1f77b4", "label": "humann ✓"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${HumannQueueArn}",    {"color": "#ff7f0e", "label": "humann ✗"}]
+                  ],
+                  "period": 3600,
+                  "stat": "Sum",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}"
+                }
+              }
+            ]
+          }
+        - SpotQueueArn:
+            Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
+          MetaphlanQueueArn:
+            Fn::ImportValue: !Sub "${BatchStackName}-MetaphlanQueueArn"
+          HumannQueueArn:
+            Fn::ImportValue: !Sub "${BatchStackName}-HumannQueueArn"
+    DependsOn:
+      - FailedJobsAlarm
+      - RunnableJobsAlarm
+
+# ---------------------------------------------------------------------------
+# AWS Budget
+# ---------------------------------------------------------------------------
+
+  BatchMonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${ProjectTag}-monthly"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetThreshold
+          Unit: USD
+        CostFilters:
+          TagKeyValue:
+            - !Sub "user:Project$${ProjectTag}"
+        CostTypes:
+          IncludeTax: true
+          IncludeSubscription: true
+          UseBlended: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+
+Outputs:
+  DashboardUrl:
+    Description: CloudWatch dashboard for monitoring Batch jobs and vCPU utilization
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectTag}-batch"
+
+  AlarmTopicArn:
+    Description: SNS topic ARN for Batch alarm and budget notifications
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-AlarmTopicArn"

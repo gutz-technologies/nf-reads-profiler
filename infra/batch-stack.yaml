@@ -66,14 +66,18 @@ Parameters:
       r8g.metal-24xl (96 vCPU) so Batch can launch exactly one bare-metal VM
       and no second one (192 > 100).
 
-  MonthlyBudgetThreshold:
+  MaxvCPUsHumann:
     Type: Number
-    Default: 200
-    Description: Monthly AWS spend alert threshold in USD (alerts fire at 80% actual and 100% forecasted)
+    Default: 100
+    Description: >
+      Maximum vCPUs for the spot-humann compute environment (profile_function).
+      Spot-only; no on-demand fallback. Capped just above one r8g.metal-24xl
+      (96 vCPU) so Batch launches exactly one bare-metal VM (192 > 100) for
+      validation. Raise for the function phase of large runs — this is the
+      long-pole of a full run, so it wants several boxes at scale.
 
-  BudgetAlertEmail:
-    Type: String
-    Description: Email address for budget and CloudWatch alarm notifications
+  # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/monitoring-stack.yaml
+  # (budget, SNS topic, and alarms live there now).
 
   ProjectTag:
     Type: String
@@ -447,7 +451,9 @@ Resources:
           - Sid: PassLambdaRole
             Effect: Allow
             Action: iam:PassRole
-            Resource: !GetAtt BatchMetricsLambdaRole.Arn
+            # Both metrics lambdas live in monitoring-stack.yaml now; match by
+            # name pattern so the runner can (re)deploy that stack.
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectTag}-*-lambda-role"
             Condition:
               StringEquals:
                 iam:PassedToService: lambda.amazonaws.com
@@ -516,27 +522,25 @@ Resources:
           Value: !Ref EnvironmentTag
 
 # ---------------------------------------------------------------------------
-# Launch Template — pre-baked custom AMI with databases + Miniconda/awscli
+# Launch Template — thin stock AMI, awscli only (spot-queue + on-demand glue)
 # ---------------------------------------------------------------------------
-# The AMI is built by infra/packer/build-ami.sh and contains:
-#   /opt/conda-aws/bin/aws  — Miniconda + awscli (Nextflow's cliPath)
-#   /mnt/dbs/               — all four reference databases (~65 GiB)
-#
-# Nextflow mounts the GRANDPARENT directory of aws.batch.cliPath from the host
-# into each Batch container at the same path. For cliPath '/opt/conda-aws/bin/aws'
-# that means /opt/conda-aws/ is bind-mounted in.
-#
-# UserData is a minimal health check — no S3 sync or software installation.
-# Workers register with ECS immediately at boot.
+# spot-queue carries only DB-free glue jobs (count_reads, clean_reads, combines,
+# multiqc, SRA ingest) — none read /mnt/dbs. So this no longer uses the baked-DB
+# custom AMI (no DBs to stage => no FSR, no Packer rebuild). Stock AL2023 ECS
+# ARM64 AMI (ThinEcsAmiId); UserData only installs awscli v2 to
+# /opt/conda-aws/bin (the GLOBAL aws.batch.cliPath; Nextflow bind-mounts the
+# grandparent /opt/conda-aws into every container, so this path must exist on
+# the host for any job to stage inputs from the S3 workdir).
 
   BatchWorkerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub "${ProjectTag}-worker"
       LaunchTemplateData:
-        ImageId: !Ref EcsAmiId
+        ImageId: !Ref ThinEcsAmiId
         # 500 GB gp3 root volume. AL2023 ECS-optimized defaults to 30 GB, which
         # is exhausted by fasterq-dump scratch + pigz output on medium SRA runs.
+        # No DBs live here anymore (thin AMI); sized purely for SRA ingest scratch.
         # Volume is deleted on instance termination; cost is ~$0.055/hr while
         # a worker is running, $0 once the fleet scales to zero.
         BlockDeviceMappings:
@@ -548,7 +552,7 @@ Resources:
               DeleteOnTermination: true
               Encrypted: true
         UserData:
-          Fn::Base64: !Sub |
+          Fn::Base64: |
             MIME-Version: 1.0
             Content-Type: multipart/mixed; boundary="==BOUNDARY=="
 
@@ -558,42 +562,24 @@ Resources:
             #!/bin/bash
             exec > >(tee -a /var/log/nf-userdata.log) 2>&1
             set -x
-            echo "=== nf-reads-profiler worker boot at $(date) ==="
+            echo "=== nf-reads-profiler glue worker boot at $(date) ==="
 
-            ERRORS=0
-            for d in chocophlan_v4_alpha full_mapping_v4_alpha metaphlan_databases uniref90_annotated_v4_alpha_ec_filtered; do
-              if [ ! -d "/mnt/dbs/$d" ]; then
-                echo "ERROR: /mnt/dbs/$d missing — wrong AMI?" >&2
-                ERRORS=$((ERRORS + 1))
-              fi
-            done
-
-            if [ ! -f /opt/conda-aws/bin/aws ]; then
-              echo "ERROR: /opt/conda-aws/bin/aws missing — wrong AMI?" >&2
-              ERRORS=$((ERRORS + 1))
+            # awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            # grandparent /opt/conda-aws must exist for every container). No DB
+            # staging — glue jobs read nothing from /mnt/dbs.
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
             fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
 
-            if [ $ERRORS -gt 0 ]; then
-              echo "FATAL: $ERRORS pre-bake checks failed. Rebuild AMI with infra/packer/build-ami.sh" >&2
-            else
-              echo "OK: all databases and awscli present"
-              cat /mnt/dbs/.ami-build-timestamp 2>/dev/null || true
-
-              # Phase 1 (issue I20): pre-warm MetaPhlAn vJan25 page cache.
-              # Run in the BACKGROUND so cloud-init returns immediately and
-              # the ECS agent can register with Batch. Without `&`, the cat
-              # blocks UserData for the duration of the snapshot lazy-load
-              # (~95 min observed at 6 MB/s without FSR, see issue I24),
-              # and the worker accepts no jobs the entire time. With `&`,
-              # ingest jobs (FASTERQ_DUMP, etc.) start immediately; only
-              # profile_taxa pays any remaining unwarmed cost on first task.
-              echo "=== Starting MetaPhlAn vJan25 page-cache warmup (background) ==="
-              nohup bash -c 'time cat /mnt/dbs/metaphlan_databases/vJan25/*.bt2l > /dev/null 2>&1' \
-                >> /var/log/nf-userdata.log 2>&1 &
-              echo "Warmup PID: $!"
-            fi
-
-            echo "=== nf-reads-profiler worker boot done at $(date) ==="
+            echo "=== nf-reads-profiler glue worker boot done at $(date) ==="
 
             --==BOUNDARY==--
 
@@ -683,6 +669,100 @@ Resources:
             --==BOUNDARY==--
 
 # ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, copies HUMAnN DB set from S3 (spot-humann)
+# ---------------------------------------------------------------------------
+# Same thin-AMI + S3-copy pattern as MetaphlanWorkerLaunchTemplate, but stages
+# the four HUMAnN databases (~65 GiB) instead of vJan25. Copy runs SYNCHRONOUSLY
+# so ECS registration is gated until all four prefixes are present:
+#   1. install awscli v2 to /opt/conda-aws/bin (global aws.batch.cliPath).
+#   2. aws s3 sync the four HUMAnN prefixes to /mnt/dbs/ (same dest paths the
+#      baked AMI uses; conf/aws_batch.config reads them from /mnt/dbs/).
+# NOTE: chocophlan_v4_alpha is ~30k small objects. We use `s3 sync` (not `cp`)
+# and bump max_concurrent_requests so the object count (not byte count) doesn't
+# dominate the copy. One copy per instance, amortized over every job on it.
+
+  HumannWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-humann-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 300          # ~65 GB HUMAnN DBs + per-job HUMAnN scratch (12 concurrent jobs)
+              VolumeType: gp3
+              Iops: 12000              # higher than metaphlan's 9000 — the 30k-object chocophlan write is IOPS-bound
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== spot-humann worker boot at $(date) ==="
+
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            # 2. Copy the four HUMAnN DBs from S3 (SYNCHRONOUS — gates ECS
+            # registration). Same single `s3 sync` + include-filter form the baked
+            # AMI uses (infra/packer/worker-ami.pkr.hcl), scoped to vOct22 (not
+            # vJan25). chocophlan = ~30k objects, so raise concurrency first.
+            "$AWS" configure set default.s3.max_concurrent_requests 64
+            mkdir -p /mnt/dbs
+            echo "=== Syncing HUMAnN DBs from s3://${DbSourceBucket} -> /mnt/dbs ==="
+            if ! time "$AWS" s3 sync "s3://${DbSourceBucket}/" /mnt/dbs/ \
+                 --only-show-errors \
+                 --exclude "*" \
+                 --include "metaphlan_databases/vOct22/*" \
+                 --include "chocophlan_v4_alpha/*" \
+                 --include "uniref90_annotated_v4_alpha_ec_filtered/*" \
+                 --include "full_mapping_v4_alpha/*"; then
+              echo "FATAL: HUMAnN DB sync failed — worker will not be useful" >&2
+              exit 1
+            fi
+            # Fail fast if any prefix landed empty (mirror baked-AMI validation).
+            for d in chocophlan_v4_alpha full_mapping_v4_alpha \
+                     uniref90_annotated_v4_alpha_ec_filtered \
+                     metaphlan_databases/vOct22; do
+              c=$(find "/mnt/dbs/$d" -type f 2>/dev/null | wc -l)
+              echo "  $d: $c files"
+              [ "$c" -gt 0 ] || { echo "FATAL: /mnt/dbs/$d empty" >&2; exit 1; }
+            done
+            echo "OK: HUMAnN DBs present ($(du -sh /mnt/dbs | cut -f1))"
+
+            # 3. htop + btop (monitoring; non-essential, don't fail boot on them).
+            echo "=== Installing htop + btop ==="
+            dnf install -y htop bzip2 >/dev/null 2>&1 || yum install -y htop bzip2
+            cd /tmp
+            curl -fLO https://github.com/aristocratos/btop/releases/download/v1.4.0/btop-aarch64-linux-musl.tbz && \
+            tar -xf btop-aarch64-linux-musl.tbz && \
+            cp btop/bin/btop /usr/local/bin/ && \
+            btop --version || echo "WARN: btop install failed, continuing"
+
+            echo "=== spot-humann worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
 # Compute Environments — Graviton (ARM64) only
 # ---------------------------------------------------------------------------
 # All containers in this pipeline publish multi-arch images (linux/arm64 + amd64).
@@ -690,15 +770,19 @@ Resources:
 # AWS Batch automatically selects the ARM64 ECS-optimized AMI when ARM instance
 # types are specified.
 #
-# Resource fits against aws_batch.config limits (cpus: 8, memory: 64 GB):
-#   r8g.2xlarge  = 8 vCPU / 64 GB  ← HUMAnN (memory-bound), exact fit
-#   r8g.4xlarge  = 16 vCPU / 128 GB ← two HUMAnN jobs in parallel
-#   m8g.2xlarge  = 8 vCPU / 32 GB  ← MetaPhlAn, fastp, SRA download
-#   c8g.2xlarge  = 8 vCPU / 16 GB  ← MetaPhlAn (CPU-bound alignment)
+# spot-queue carries only the DB-free glue jobs (count_reads, clean_reads,
+# combines, multiqc, SRA ingest); profile_taxa and profile_function route to the
+# dedicated metal queues (spot-metaphlan / spot-humann). Glue is light
+# (default cpus: 2 / memory: 4 GB = 2 GB/vCPU), so the memory-optimized r8g
+# family (8 GB/vCPU) was dropped — c8g (2 GB/vCPU, cheapest exact fit) + m8g
+# (4 GB/vCPU, headroom for fastp/fasterq-dump) cover it across 4 pools.
+# TODO: right-size default cpus/memory from the cosmosid-infant trace
+# (outdir/cosmosid-infant/reports/*_trace.txt — peak_rss/cpus columns) before
+# the next big run. Current 2/4 is a first guess, not measured.
 
   # Primary: spot instances. SPOT_CAPACITY_OPTIMIZED selects the pool with the
-  # deepest available capacity, minimizing interruptions for long HUMAnN jobs.
-  # Graviton 4 only — G2/G3 dropped for per-task cost (see I25).
+  # deepest available capacity. Graviton 4 only — G2/G3 dropped for per-task
+  # cost (see I25).
   SpotComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -713,13 +797,10 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          # Graviton 4 (r8g) — memory-optimized, best price/perf for HUMAnN
-          - r8g.2xlarge    # 8 vCPU / 64 GB
-          - r8g.4xlarge    # 16 vCPU / 128 GB
-          # Graviton 4 (m8g) — general purpose for MetaPhlAn, fastp, downloads
+          # Graviton 4, c8g/m8g only — light glue jobs at 2 GB/vCPU. r8g dropped
+          # (8 GB/vCPU mem-optimized = wasted on glue). 4 pools, 2 families.
           - m8g.2xlarge    # 8 vCPU / 32 GB
           - m8g.4xlarge    # 16 vCPU / 64 GB
-          # Graviton 4 (c8g) — compute-optimized for CPU-bound alignment
           - c8g.2xlarge    # 8 vCPU / 16 GB
           - c8g.4xlarge    # 16 vCPU / 32 GB
         LaunchTemplate:
@@ -749,8 +830,6 @@ Resources:
         MaxvCpus: !Ref MaxvCPUsOnDemand
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         InstanceTypes:
-          - r8g.2xlarge
-          - r8g.4xlarge
           - m8g.2xlarge
           - m8g.4xlarge
           - c8g.2xlarge
@@ -814,6 +893,42 @@ Resources:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
 
+  # spot-humann: dedicated spot CE for profile_function. Thin AMI that syncs the
+  # HUMAnN DB set (~65 GiB) from S3 at boot (see HumannWorkerLaunchTemplate).
+  # Spot-only — no on-demand fallback (jobs retry on reclaim; maxSpotAttempts=5).
+  # Same three 96-vCPU bare-metal pools as spot-metaphlan for SPOT_CAPACITY_OPTIMIZED
+  # depth; 16 cpus/job packs 6 jobs/VM, all sharing the single staged HUMAnN DB
+  # copy on that instance.
+  SpotHumannComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsHumann
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
+          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
+        LaunchTemplate:
+          LaunchTemplateId: !Ref HumannWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
 # ---------------------------------------------------------------------------
 # Job Queue
 # ---------------------------------------------------------------------------
@@ -850,6 +965,21 @@ Resources:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
 
+  # spot-humann: profile_function jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  HumannQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-humann
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotHumannComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
 # ---------------------------------------------------------------------------
 # CloudWatch Logs
 # ---------------------------------------------------------------------------
@@ -864,410 +994,6 @@ Resources:
           Value: !Ref ProjectTag
         - Key: Environment
           Value: !Ref EnvironmentTag
-
-# ---------------------------------------------------------------------------
-# SNS — alarm and budget notifications
-# ---------------------------------------------------------------------------
-
-  AlarmTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub "${ProjectTag}-alerts"
-      Subscription:
-        - Protocol: email
-          Endpoint: !Ref BudgetAlertEmail
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-# ---------------------------------------------------------------------------
-# CloudWatch Alarms
-# ---------------------------------------------------------------------------
-
-  # Fires when 5+ jobs fail within 5 minutes — indicates a systemic issue
-  # (bad container image, IAM permission error, etc.) vs. normal spot interruptions
-  # which are handled transparently by maxRetries=3 in aws_batch.config.
-  FailedJobsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub "${ProjectTag}-batch-failed-jobs"
-      AlarmDescription: "5+ Batch jobs failed in 5 minutes on spot-queue. Likely a systemic issue rather than spot interruptions (those are retried automatically)."
-      Namespace: AWS/Batch
-      MetricName: FailedJobCount
-      Dimensions:
-        - Name: JobQueue
-          Value: !GetAtt SpotQueue.JobQueueArn
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 5
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-    DependsOn: SpotQueue
-
-  # Fires when many jobs are stuck RUNNABLE — indicates spot capacity is
-  # exhausted AND the on-demand fallback CE is also full or hitting the
-  # MaxvCPUsOnDemand cap. Operator action: raise MaxvCPUsOnDemand or
-  # check spot interruption rate. Tracks the RunnableJobCount gauge
-  # emitted by BatchQueueDepthFunction (issue I17).
-  RunnableJobsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub "${ProjectTag}-batch-high-runnable"
-      AlarmDescription: "10+ jobs stuck RUNNABLE on spot-queue for 15+ minutes. Spot capacity exhausted and on-demand vCPU limit reached. Consider raising MaxvCPUsOnDemand."
-      Namespace: AWS/Batch
-      MetricName: RunnableJobCount
-      Dimensions:
-        - Name: JobQueue
-          Value: !GetAtt SpotQueue.JobQueueArn
-      Statistic: Maximum
-      Period: 300
-      EvaluationPeriods: 3
-      Threshold: 10
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-    DependsOn: SpotQueue
-
-# ---------------------------------------------------------------------------
-# Batch Job Metrics — EventBridge → Lambda → CloudWatch
-# Publishes SucceededJobCount, FailedJobCount, etc. to AWS/Batch namespace.
-# AWS Batch does not emit these metrics automatically; this is the back-end
-# that feeds the dashboard below.
-# ---------------------------------------------------------------------------
-
-  BatchMetricsLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${ProjectTag}-batch-metrics-lambda-role"
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PutBatchMetrics
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: cloudwatch:PutMetricData
-                Resource: '*'
-                Condition:
-                  StringEquals:
-                    cloudwatch:namespace: AWS/Batch
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchMetricsFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: NextflowRunnerPolicy
-    Properties:
-      FunctionName: !Sub "${ProjectTag}-batch-metrics"
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt BatchMetricsLambdaRole.Arn
-      Timeout: 10
-      Code:
-        ZipFile: |
-          import boto3
-
-          cw = boto3.client('cloudwatch')
-
-          # Event-driven counters: emit value=1 per state-transition. Sum
-          # aggregation gives a "throughput in window" metric. Only kept
-          # for terminal states; queue-depth gauges (RUNNABLE, RUNNING,
-          # etc.) are emitted by the scheduled BatchQueueDepthFunction
-          # below as actual depths via list-jobs. See issue I17.
-          METRIC_MAP = {
-              'SUCCEEDED': 'SucceededJobCount',
-              'FAILED':    'FailedJobCount',
-          }
-
-          def handler(event, context):
-              detail = event.get('detail', {})
-              status = detail.get('status')
-              job_queue = detail.get('jobQueue')  # full ARN from Batch events
-              metric = METRIC_MAP.get(status)
-              if not metric or not job_queue:
-                  return
-              cw.put_metric_data(
-                  Namespace='AWS/Batch',
-                  MetricData=[{
-                      'MetricName': metric,
-                      'Dimensions': [{'Name': 'JobQueue', 'Value': job_queue}],
-                      'Value': 1,
-                      'Unit': 'Count',
-                  }]
-              )
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchJobStateRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${ProjectTag}-batch-job-state-change"
-      Description: "Capture Batch job state changes and publish counts to CloudWatch AWS/Batch namespace"
-      EventPattern:
-        source:
-          - aws.batch
-        detail-type:
-          - Batch Job State Change
-      State: ENABLED
-      Targets:
-        - Id: BatchMetricsLambda
-          Arn: !GetAtt BatchMetricsFunction.Arn
-
-  BatchMetricsLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt BatchMetricsFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt BatchJobStateRule.Arn
-
-# ---------------------------------------------------------------------------
-# Batch Queue Depth — scheduled poll → CloudWatch (issue I17)
-# Replaces the broken event-driven RunnableJobCount with an actual depth
-# gauge polled every 60s via list-jobs. The previous design emitted
-# value=1 per state-change event, which gave the alarm at most "1" to
-# look at; with this Lambda the alarm sees real queue depth.
-# ---------------------------------------------------------------------------
-
-  BatchQueueDepthLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${ProjectTag}-batch-queue-depth-lambda-role"
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PollAndPublish
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: batch:ListJobs
-                Resource: '*'
-              - Effect: Allow
-                Action: cloudwatch:PutMetricData
-                Resource: '*'
-                Condition:
-                  StringEquals:
-                    cloudwatch:namespace: AWS/Batch
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchQueueDepthFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub "${ProjectTag}-batch-queue-depth"
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt BatchQueueDepthLambdaRole.Arn
-      Timeout: 30
-      Environment:
-        Variables:
-          QUEUE_NAME: !Ref SpotQueue
-          QUEUE_ARN:  !GetAtt SpotQueue.JobQueueArn
-      Code:
-        ZipFile: |
-          import os
-          import boto3
-
-          batch = boto3.client('batch')
-          cw    = boto3.client('cloudwatch')
-
-          QUEUE_NAME = os.environ['QUEUE_NAME']
-          QUEUE_ARN  = os.environ['QUEUE_ARN']
-
-          # Live queue-depth gauges. Emitted as actual counts (not value=1)
-          # so Maximum/Average aggregation gives the real backlog.
-          STATUSES = {
-              'SUBMITTED': 'SubmittedJobCount',
-              'PENDING':   'PendingJobCount',
-              'RUNNABLE':  'RunnableJobCount',
-              'STARTING':  'StartingJobCount',
-              'RUNNING':   'RunningJobCount',
-          }
-
-          def count_jobs(status):
-              count, token = 0, None
-              while True:
-                  kwargs = {'jobQueue': QUEUE_NAME, 'jobStatus': status, 'maxResults': 100}
-                  if token:
-                      kwargs['nextToken'] = token
-                  resp = batch.list_jobs(**kwargs)
-                  count += len(resp['jobSummaryList'])
-                  token = resp.get('nextToken')
-                  if not token:
-                      break
-              return count
-
-          def handler(event, context):
-              metric_data = [
-                  {
-                      'MetricName': metric,
-                      'Dimensions': [{'Name': 'JobQueue', 'Value': QUEUE_ARN}],
-                      'Value': count_jobs(status),
-                      'Unit': 'Count',
-                  }
-                  for status, metric in STATUSES.items()
-              ]
-              cw.put_metric_data(Namespace='AWS/Batch', MetricData=metric_data)
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchQueueDepthScheduleRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${ProjectTag}-batch-queue-depth-schedule"
-      Description: "Poll Batch queue depth every 60s and publish to CloudWatch."
-      ScheduleExpression: rate(1 minute)
-      State: ENABLED
-      Targets:
-        - Id: BatchQueueDepthLambda
-          Arn: !GetAtt BatchQueueDepthFunction.Arn
-
-  BatchQueueDepthLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt BatchQueueDepthFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt BatchQueueDepthScheduleRule.Arn
-
-# ---------------------------------------------------------------------------
-# CloudWatch Dashboard
-# ---------------------------------------------------------------------------
-
-  BatchDashboard:
-    Type: AWS::CloudWatch::Dashboard
-    Properties:
-      DashboardName: !Sub "${ProjectTag}-batch"
-      DashboardBody: !Sub |
-        {
-          "widgets": [
-            {
-              "type": "metric",
-              "x": 0, "y": 0, "width": 12, "height": 6,
-              "properties": {
-                "title": "Job Status — spot-queue",
-                "metrics": [
-                  ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
-                  ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                  ["AWS/Batch", "PendingJobCount",   "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                  ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                  ["AWS/Batch", "StartingJobCount",  "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                  ["AWS/Batch", "RunningJobCount",   "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#17becf", "label": "Running"}]
-                ],
-                "period": 300,
-                "stat": "Sum",
-                "view": "timeSeries",
-                "region": "${AWS::Region}"
-              }
-            },
-            {
-              "type": "alarm",
-              "x": 0, "y": 6, "width": 6, "height": 3,
-              "properties": {
-                "title": "Active Alarms",
-                "alarms": [
-                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-failed-jobs",
-                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-high-runnable"
-                ]
-              }
-            },
-            {
-              "type": "metric",
-              "x": 6, "y": 6, "width": 18, "height": 6,
-              "properties": {
-                "title": "Job Failure Rate (Failed / Submitted)",
-                "metrics": [
-                  ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueue.JobQueueArn}"],
-                  ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueue.JobQueueArn}"]
-                ],
-                "period": 3600,
-                "stat": "Sum",
-                "view": "timeSeries",
-                "region": "${AWS::Region}"
-              }
-            }
-          ]
-        }
-    DependsOn:
-      - FailedJobsAlarm
-      - RunnableJobsAlarm
-
-# ---------------------------------------------------------------------------
-# AWS Budget
-# ---------------------------------------------------------------------------
-
-  BatchMonthlyBudget:
-    Type: AWS::Budgets::Budget
-    Properties:
-      Budget:
-        BudgetName: !Sub "${ProjectTag}-monthly"
-        BudgetType: COST
-        TimeUnit: MONTHLY
-        BudgetLimit:
-          Amount: !Ref MonthlyBudgetThreshold
-          Unit: USD
-        CostFilters:
-          TagKeyValue:
-            - !Sub "user:Project$${ProjectTag}"
-        CostTypes:
-          IncludeTax: true
-          IncludeSubscription: true
-          UseBlended: false
-      NotificationsWithSubscribers:
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 80
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref BudgetAlertEmail
-        - Notification:
-            NotificationType: FORECASTED
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref BudgetAlertEmail
 
 # ---------------------------------------------------------------------------
 # Outputs
@@ -1285,6 +1011,12 @@ Outputs:
     Value: !GetAtt MetaphlanQueue.JobQueueArn
     Export:
       Name: !Sub "${AWS::StackName}-MetaphlanQueueArn"
+
+  HumannQueueArn:
+    Description: ARN of the spot-humann job queue (profile_function)
+    Value: !GetAtt HumannQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-HumannQueueArn"
 
   BatchJobRoleArn:
     Description: >
@@ -1308,9 +1040,8 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-WorkDirBucket"
 
-  DashboardUrl:
-    Description: CloudWatch dashboard for monitoring Batch jobs and vCPU utilization
-    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectTag}-batch"
+  # DashboardUrl moved to infra/monitoring-stack.yaml (split out at the 51 KB
+  # inline-template limit). The dashboard name is unchanged (${ProjectTag}-batch).
 
   BatchConsoleUrl:
     Description: AWS Batch console — view job queues, compute environments, and running jobs
