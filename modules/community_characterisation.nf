@@ -113,8 +113,12 @@ process profile_function {
     --metaphlan-options "-t rel_ab_w_read_stats --index ${params.humann_metaphlan_id} --bowtie2db ${params.humann_metaphlan_db} --bt2_ps ${params.humann_bt2options}" \\
     --pathways metacyc \\
     --threads ${task.cpus * 2} \\
-    --memory-use minimum \\
-    ${params.enable_medi ? '' : '--remove-temp-output'}
+    --memory-use minimum
+  # HUMAnN temp output kept on purpose (no --remove-temp-output): humann_temp's
+  # bowtie2_unaligned.fa is MEDI's Kraken2 input. profile_function is now
+  # independent of enable_medi, so MEDI can be turned on later via -resume with
+  # NO HUMAnN rerun. Disk savings aren't worth the MEDI-integration edge case,
+  # and these nodes are IO-bound, not disk-bound.
 
   # MultiQC doesn't have a module for humann yet. As a consequence, I
   # had to create a YAML file with all the info I need via a bash script
