@@ -1024,16 +1024,16 @@ Resources:
           # MaxvCPUsMetaphlan=200 every pool here can launch one VM (192 < 200);
           # a second 192-vCPU VM is blocked (384 > 200), two 96-vCPU VMs fit.
           - c8g.12xlarge      # 48 vCPU / 96 GB — deeper pool, good $/vCPU
-          - c8g.48xlarge      # 192 vCPU / 384 GB — staged (cap-gated)
+          - c8g.48xlarge      # 192 vCPU / 384 GB — one VM fits under cap 200
           - c8gd.24xlarge     # 96 vCPU / 192 GB + local NVMe — separate spot pool
-          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe — staged (cap-gated)
+          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe — one VM fits under cap 200
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
-          - c8g.metal-48xl    # 192 vCPU / 384 GB — staged (cap-gated)
-          - c8gn.48xlarge     # 192 vCPU / 384 GB — staged (cap-gated)
+          - c8g.metal-48xl    # 192 vCPU / 384 GB — one VM fits under cap 200
+          - c8gn.48xlarge     # 192 vCPU / 384 GB — one VM fits under cap 200
           - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
-          - m8gd.metal-48xl   # 192 vCPU / 768 GB — staged (cap-gated)
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB — one VM fits under cap 200
           - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
-          - r8g.metal-48xl    # 192 vCPU / 1.5 TB — staged (cap-gated)
+          - r8g.metal-48xl    # 192 vCPU / 1.5 TB — one VM fits under cap 200
         LaunchTemplate:
           LaunchTemplateId: !Ref MetaphlanWorkerLaunchTemplate
           Version: $Latest

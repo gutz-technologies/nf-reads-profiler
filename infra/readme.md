@@ -115,6 +115,27 @@ stack reads that SSM parameter at deploy time. See
 The earlier S3-sync-at-boot model (~20 min boot delay for 30k objects)
 is documented in [ADR-001](adr-001-db-placement.md), now superseded.
 
+> **TODO — remove the custom AMI / Packer / FSR pipeline (orphaned 2026-06-23).**
+> All four queues (`spot-queue`, `spot-metaphlan`, `spot-humann`, `spot-medi`)
+> now boot the thin stock AL2023 ECS ARM64 AMI (`ThinEcsAmiId`) and sync the DBs
+> they need from S3 at boot. The baked-DB custom AMI is **no longer referenced**:
+> verified nothing `!Ref`s `EcsAmiId` (cfn-lint emits `W2001 EcsAmiId not used`)
+> and all four launch templates resolve to `ThinEcsAmiId`. The whole baked-AMI
+> path is dead weight and can be removed:
+>
+> - **batch-stack.yaml** — drop the `EcsAmiId` parameter and stop passing it in
+>   `/deploy-stack` (the skill's `--parameter-overrides EcsAmiId=...` and the
+>   SSM lookup step).
+> - **Packer pipeline** — `infra/packer/build-ami.sh`,
+>   `infra/playbook-ami-v2-rebuild.md`, and the SSM param
+>   `/nf-reads-profiler/ami-id`.
+> - **FSR** — `infra/packer/enable-fsr.sh` / `disable-fsr.sh` and the
+>   README "enable FSR before a run" step (FSR only sped up dehydrating the
+>   baked AMI's snapshot; thin AMIs don't need it).
+>
+> Keep this section's S3-sync-at-boot description; delete the "Custom AMI with
+> pre-baked databases" paragraph above once the removal lands.
+
 ---
 
 ### Prerequisites
