@@ -104,6 +104,38 @@ references `nf-reads-profiler-batch-job-role` as `aws.batch.jobRole`.
 Resource caps live in `conf/aws_batch.config` via `process.resourceLimits` —
 retries won't blow past these (prevents runaway memory on retry storms).
 
+### Deploying compute-resource changes REPLACES the CE (kills running jobs)
+
+The CEs in `batch-stack.yaml` do not set `ReplaceComputeEnvironment`, so it
+defaults to **`true`**: any change to a CE's *compute resources* (most commonly
+`InstanceTypes`, but also subnets/SGs/allocation strategy) makes CloudFormation
+**replace the entire CE** — create a new physical resource, then delete the old
+one, terminating every instance on it and killing in-flight jobs. Verified
+2026-06-23 via stack events: a deploy that only edited `SpotMetaphlan`'s
+`InstanceTypes` emitted "Requested update requires the creation of a new
+physical resource; hence creating one" and drained the CE. **Exception:** a
+pure `maxVcpus` change updates *in place* (no replacement) — that's why the
+`MaxvCPUsHumann` 600→960 bump didn't disturb running humann jobs, but the
+later InstanceTypes edit did.
+
+Rules of thumb:
+- **Never deploy an `InstanceTypes` (or other compute-resource) change while a
+  run is live** on the affected queue — it will kill the running jobs. Stage the
+  YAML edit and deploy after the run, or accept the job loss (jobs retry under
+  `maxSpotAttempts`/Nextflow, but it's a real interruption).
+- YAML **comment-only** edits never trigger this — CloudFormation discards
+  comments; replacement is always property-level.
+- Observed but unconfirmed: in the 2026-06-23 deploy the *unchanged* humann CE
+  was replaced alongside metaphlan. Leading hypothesis is the launch-template
+  `Version: $Latest` ref making CFN re-evaluate/replace all CEs on any compute
+  update (changeset auto-deleted, so not provable from artifacts). Treat "deploy
+  any compute-resource change" as potentially churning **all** CEs until ruled
+  out.
+- To make such edits non-destructive, set `ReplaceComputeEnvironment: false`
+  plus an `UpdatePolicy` (`TerminateJobsOnUpdate: false`, a
+  `JobExecutionTimeoutMinutes`) so Batch updates in place and drains running
+  jobs instead of terminating them. Not yet applied to this stack.
+
 ### `project` and execution-report paths (config gotcha)
 
 `params.project` defaults to `"none"`; `main.nf` now fails fast if it's left
