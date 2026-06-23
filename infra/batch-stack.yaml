@@ -68,14 +68,15 @@ Parameters:
 
   MaxvCPUsHumann:
     Type: Number
-    Default: 600
+    Default: 960
     Description: >
       Maximum vCPUs for the spot-humann compute environment (profile_function).
       Spot-only; no on-demand fallback. profile_function is the long-pole of a
-      full run, so this is sized for several bare-metal boxes in parallel: 600
-      vCPU = up to ~3x c8g.metal-48xl (192) or ~6x *.metal-24xl (96), i.e.
-      ~36 concurrent HUMAnN jobs (16 cpus each). Measured ~45 min/job, so this
-      clears a 2098-sample cohort in <2 days vs ~11 days on a single box.
+      full run, so this is sized for several bare-metal boxes in parallel: 960
+      vCPU = up to ~5x c8g.metal-48xl (192) or ~10x *.metal-24xl (96), i.e.
+      ~60 concurrent HUMAnN jobs (16 cpus each). Measured ~45 min/job. Sits
+      under a ~1000-core total budget alongside spot-metaphlan (100). Bumped
+      from 600 mid-run on the cosmosid-infant cohort (2026-06-23).
 
   # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/monitoring-stack.yaml
   # (budget, SNS topic, and alarms live there now).
@@ -958,7 +959,7 @@ Resources:
         Environment: !Ref EnvironmentTag
 
   # Fallback: on-demand Graviton instances — used when spot capacity unavailable.
-  # Capped at MaxvCPUsOnDemand (default 64) as a cost safety net.
+  # Capped at MaxvCPUsOnDemand (default 0 — on-demand fallback disabled) as a cost safety net.
   OnDemandComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -1021,8 +1022,12 @@ Resources:
           # All <5% historical interruption and <$0.006/vCPU/hr. NOTE: the 192-vCPU
           # types are INERT here while MaxvCPUsMetaphlan=100 — Batch won't launch an
           # instance whose vCPUs exceed the cap. Staged for if/when the cap is raised;
-          # today only the 96-vCPU *.metal-24xl pools can launch.
+          # today only the <=96-vCPU pools can launch (c8g.12xlarge 48-vCPU and the
+          # 96-vCPU *.24xl pools, metal + c8gd).
+          - c8g.12xlarge      # 48 vCPU / 96 GB — deeper pool, good $/vCPU
           - c8g.48xlarge      # 192 vCPU / 384 GB — staged (cap-gated)
+          - c8gd.24xlarge     # 96 vCPU / 192 GB + local NVMe — separate spot pool
+          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe — staged (cap-gated)
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
           - c8g.metal-48xl    # 192 vCPU / 384 GB — staged (cap-gated)
           - c8gn.48xlarge     # 192 vCPU / 384 GB — staged (cap-gated)
@@ -1067,7 +1072,15 @@ Resources:
           # HUMAnN jobs/VM, 96-vCPU = 6 (16 cpus each). Capacity-optimized picks the
           # deepest pool; the 24xl pools score 9 in us-east-2 while 48xl scores ~3,
           # so the 24xls carry the fleet and the 48xls are opportunistic bonus.
+          # Best $/vCPU comes from the largest nodes, so the list is deliberately
+          # weighted to 192-vCPU pools. The mid-size *.16xlarge types were considered
+          # and rejected — poor $/vCPU. c8g.12xlarge (48 vCPU = 3 jobs/VM) is the one
+          # smaller type with competitive $/vCPU, added as a deeper, more-available
+          # pool to fall back on when the metal/48xl pools are capacity-constrained
+          # (observed 2026-06-23: fleet stuck ~480/960 on metal scarcity).
+          - c8g.12xlarge      # 48 vCPU / 96 GB — 3 jobs/VM; deeper pool, okay $/vCPU, bad interrupt rate
           - c8g.48xlarge      # 192 vCPU / 384 GB — 12 jobs/VM
+          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe — 12 jobs/VM; okay $/vCPU, separate spot pool
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — 6 jobs/VM
           - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — 12 jobs/VM; best $/job
           - c8gn.48xlarge     # 192 vCPU / 384 GB — 12 jobs/VM
