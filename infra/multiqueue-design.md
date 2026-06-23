@@ -1,7 +1,9 @@
 # Design: per-database Batch queues (`multiqueue`)
 
-Status: **in progress** — `spot-metaphlan` being implemented on the `multiqueue`
-branch. `spot-humann` and `spot-medi` are designed here but **not yet built**.
+Status: **in progress** — `spot-metaphlan`, `spot-humann`, and `spot-medi` are
+all built and deployed on the `multiqueue` branch. `spot-medi` (deployed
+2026-06-23) stages the Kraken DB to instance-store NVMe and warms the 414 GiB
+hash into RAM at boot; **untested end-to-end** — no MEDI job has run on it yet.
 
 ## Problem
 

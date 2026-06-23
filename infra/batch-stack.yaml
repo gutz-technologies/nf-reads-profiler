@@ -128,6 +128,26 @@ Parameters:
       /mnt/dbs/metaphlan_databases/vJan25/ at boot by the spot-metaphlan worker.
       Must match direct_metaphlan_db in conf/aws_batch.config.
 
+  MaxvCPUsMedi:
+    Type: Number
+    Default: 192
+    Description: >
+      Maximum vCPUs for the spot-medi compute environment (MEDI_QUANT:*).
+      Spot-only; no on-demand fallback. Sized for ~one big RAM node: 192 = one
+      192-vCPU metal (m8gd/r8gd.metal-48xl) OR up to two 96-vCPU 24xl boxes.
+      MEDI jobs run 15-40 s each once the Kraken hash is RAM-warm, so one node's
+      worth of parallelism clears the queue fast — no need for many DB nodes.
+
+  MediDbS3Uri:
+    Type: String
+    Default: s3://cjb-gutz-s3-demo/referencedata/medi_db/
+    Description: >
+      S3 prefix of the MEDI Kraken2/Bracken DB, staged to /mnt/dbs/medi_db/ at
+      boot by the spot-medi worker. Only runtime files are copied (hash.k2d ~414
+      GiB, opts.k2d, taxo.k2d, *mers.kmer_distrib, food_*); the 224 GiB
+      database.kraken build intermediate is skipped. Must match medi_db_path in
+      conf/aws_batch.config.
+
 # ---------------------------------------------------------------------------
 # S3
 # ---------------------------------------------------------------------------
@@ -696,7 +716,7 @@ Resources:
         BlockDeviceMappings:
           - DeviceName: /dev/xvda
             Ebs:
-              VolumeSize: 500          # ~65 GB HUMAnN DBs + retained humann_temp x up to 12 concurrent jobs (c8g.metal-48xl); 300 was too tight once --remove-temp-output was dropped
+              VolumeSize: 1000         # ~65 GB HUMAnN DBs + retained humann_temp x up to 12 concurrent jobs (c8g.metal-48xl, 16 vCPU/job); 500 ÷ 12 ≈ 42 GB/job still hit "No space left on device", so 1000 (~78 GB/job headroom)
               VolumeType: gp3
               Iops: 12000              # higher than metaphlan's 9000 — the 30k-object chocophlan write is IOPS-bound
               Throughput: 1000         # gp3 max; default 125 MB/s pins the ~65 GiB boot-time HUMAnN DB sync
@@ -769,6 +789,117 @@ Resources:
             btop --version || echo "WARN: btop install failed, continuing"
 
             echo "=== spot-humann worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, stages MEDI Kraken DB to instance-store NVMe
+# and warms the hash into RAM (spot-medi)
+# ---------------------------------------------------------------------------
+# MEDI is the outlier (see infra/multiqueue-design.md): the Kraken2 hash (~414
+# GiB) must be memory-resident for fast classification. So this template differs
+# from the metaphlan/humann ones in two ways:
+#   1. Stages the DB to local instance-store NVMe (not the EBS root) — these are
+#      "d"/i8g families chosen for fast local SSD, RAID0'd across all instance
+#      stores so the 414 GiB hash lands on the fastest disk available.
+#   2. After the S3 copy, warms hash.k2d into the page cache (`cat > /dev/null`,
+#      same trick as conf/test_fulldbs.config) so the first kraken job finds it
+#      in RAM (~100 GB/s) instead of cold-loading. All synchronous, so ECS
+#      registration is gated until the DB is staged AND warm.
+# Runtime files only: hash.k2d / opts.k2d / taxo.k2d (kraken), *mers.kmer_distrib
+# (bracken), food_* (quantify). The 224 GiB database.kraken + *mers.kraken build
+# intermediates are NOT read at classify time, so they are excluded.
+
+  MediWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-medi-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100          # OS + medi container image only; the ~414 GiB DB goes to instance-store NVMe, not here
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== spot-medi worker boot at $(date) ==="
+
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            # 2. Mount instance-store NVMe at /mnt/dbs (RAID0 if >1 disk). These
+            # are "Amazon EC2 NVMe Instance Storage" devices, distinct from the
+            # EBS root. The 414 GiB hash needs fast local disk before it is warmed.
+            dnf install -y mdadm e2fsprogs >/dev/null 2>&1 || yum install -y mdadm e2fsprogs
+            DEVS=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1}')
+            NDEV=$(echo $DEVS | wc -w)
+            echo "Instance-store NVMe devices ($NDEV): $DEVS"
+            [ "$NDEV" -ge 1 ] || { echo "FATAL: no instance-store NVMe found" >&2; exit 1; }
+            if [ "$NDEV" -gt 1 ]; then
+              mdadm --create /dev/md0 --level=0 --force --raid-devices=$NDEV $DEVS
+              DEV=/dev/md0
+            else
+              DEV=$DEVS
+            fi
+            mkfs.ext4 -F -m 0 "$DEV"
+            mkdir -p /mnt/dbs
+            mount "$DEV" /mnt/dbs
+            df -h /mnt/dbs
+
+            # 3. Stage MEDI runtime DB files from S3 (SYNCHRONOUS — gates ECS
+            # registration). Skip the 224 GiB database.kraken + *mers.kraken
+            # build intermediates (not read at classify time).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
+            mkdir -p /mnt/dbs/medi_db
+            echo "=== Syncing MEDI DB from ${MediDbS3Uri} -> /mnt/dbs/medi_db ==="
+            if ! time "$AWS" s3 sync "${MediDbS3Uri}" /mnt/dbs/medi_db/ \
+                 --only-show-errors \
+                 --exclude "*" \
+                 --include "hash.k2d" \
+                 --include "opts.k2d" \
+                 --include "taxo.k2d" \
+                 --include "*mers.kmer_distrib" \
+                 --include "food_matches.csv" \
+                 --include "food_contents.csv.gz"; then
+              echo "FATAL: MEDI DB sync failed — worker will not be useful" >&2
+              exit 1
+            fi
+            for f in hash.k2d opts.k2d taxo.k2d food_matches.csv food_contents.csv.gz; do
+              [ -s "/mnt/dbs/medi_db/$f" ] || { echo "FATAL: /mnt/dbs/medi_db/$f missing/empty" >&2; exit 1; }
+            done
+            echo "OK: MEDI DB staged ($(du -sh /mnt/dbs/medi_db | cut -f1))"
+
+            # 4. Warm the 414 GiB hash into the page cache so the first kraken job
+            # finds it in RAM. Synchronous: registration waits until warm.
+            echo "=== Warming hash.k2d into page cache ==="
+            time cat /mnt/dbs/medi_db/hash.k2d > /dev/null
+            echo "OK: hash warmed"
+
+            echo "=== spot-medi worker boot done at $(date) ==="
 
             --==BOUNDARY==--
 
@@ -887,14 +1018,18 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          # NOTE: c8g.metal-48xl (192 vCPU) is INERT here while MaxvCPUsMetaphlan=100
-          # — Batch won't launch an instance whose vCPUs exceed the cap (192 > 100).
-          # Staged for if/when the metaphlan cap is raised; today only the 96-vCPU
-          # types below can launch.
-          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — only usable if cap raised >192
-          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
-          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
+          # All <5% historical interruption and <$0.006/vCPU/hr. NOTE: the 192-vCPU
+          # types are INERT here while MaxvCPUsMetaphlan=100 — Batch won't launch an
+          # instance whose vCPUs exceed the cap. Staged for if/when the cap is raised;
+          # today only the 96-vCPU *.metal-24xl pools can launch.
+          - c8g.48xlarge      # 192 vCPU / 384 GB — staged (cap-gated)
           - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
+          - c8g.metal-48xl    # 192 vCPU / 384 GB — staged (cap-gated)
+          - c8gn.48xlarge     # 192 vCPU / 384 GB — staged (cap-gated)
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB — staged (cap-gated)
+          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
+          - r8g.metal-48xl    # 192 vCPU / 1.5 TB — staged (cap-gated)
         LaunchTemplate:
           LaunchTemplateId: !Ref MetaphlanWorkerLaunchTemplate
           Version: $Latest
@@ -928,12 +1063,61 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — 12 HUMAnN jobs/VM (16 cpus each); best $/job at cap 600
-          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM (16 cpus each)
-          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
-          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
+          # All <5% historical interruption and <$0.006/vCPU/hr. 192-vCPU pools = 12
+          # HUMAnN jobs/VM, 96-vCPU = 6 (16 cpus each). Capacity-optimized picks the
+          # deepest pool; the 24xl pools score 9 in us-east-2 while 48xl scores ~3,
+          # so the 24xls carry the fleet and the 48xls are opportunistic bonus.
+          - c8g.48xlarge      # 192 vCPU / 384 GB — 12 jobs/VM
+          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — 6 jobs/VM
+          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — 12 jobs/VM; best $/job
+          - c8gn.48xlarge     # 192 vCPU / 384 GB — 12 jobs/VM
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — 6 jobs/VM
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB bare metal — 12 jobs/VM
+          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM
+          - r8g.metal-48xl    # 192 vCPU / 1.5 TB bare metal — 12 jobs/VM
         LaunchTemplate:
           LaunchTemplateId: !Ref HumannWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-medi: dedicated spot CE for MEDI_QUANT:*. Thin AMI that stages the Kraken
+  # DB to instance-store NVMe and warms the 414 GiB hash into RAM at boot (see
+  # MediWorkerLaunchTemplate). Spot-only — no on-demand fallback (jobs retry on
+  # reclaim; maxSpotAttempts=5). InstanceTypes are all NVMe Graviton4 with >=768 GB
+  # RAM (the hash must be memory-resident — 512 GB types are too tight). All six
+  # pools x 3 AZs give a spot placement score of 9 in us-east-2 for one node, even
+  # though no single type scores above 3 alone. Cheapest first; the >$1 metal-48xl
+  # pools are opportunistic depth, picked only when the cheap 24xl pools are dry.
+  SpotMediComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsMedi
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          - r8gd.metal-24xl   # 96 vCPU / 768 GB + NVMe — cheapest (~$0.71), bare metal
+          - i8g.24xlarge      # 96 vCPU / 768 GB + big NVMe (~$0.82), storage-optimized
+          - r8gd.24xlarge     # 96 vCPU / 768 GB + NVMe (~$1.10)
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB + NVMe (~$1.39) — depth
+          - r8gd.metal-48xl   # 192 vCPU / 1.5 TB + NVMe (~$1.41) — depth
+          - i8g.48xlarge      # 192 vCPU / 1.5 TB + big NVMe (~$1.65) — depth
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MediWorkerLaunchTemplate
           Version: $Latest
         Subnets: !Ref SubnetIds
         SecurityGroupIds:
@@ -992,6 +1176,21 @@ Resources:
       ComputeEnvironmentOrder:
         - Order: 1
           ComputeEnvironment: !Ref SpotHumannComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-medi: MEDI_QUANT:* jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  MediQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-medi
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotMediComputeEnvironment
       Tags:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
