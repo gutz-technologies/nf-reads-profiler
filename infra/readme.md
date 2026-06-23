@@ -115,26 +115,68 @@ stack reads that SSM parameter at deploy time. See
 The earlier S3-sync-at-boot model (~20 min boot delay for 30k objects)
 is documented in [ADR-001](adr-001-db-placement.md), now superseded.
 
-> **TODO — remove the custom AMI / Packer / FSR pipeline (orphaned 2026-06-23).**
+> **PLAN — remove the custom AMI / Packer / FSR pipeline (orphaned 2026-06-23).**
 > All four queues (`spot-queue`, `spot-metaphlan`, `spot-humann`, `spot-medi`)
 > now boot the thin stock AL2023 ECS ARM64 AMI (`ThinEcsAmiId`) and sync the DBs
 > they need from S3 at boot. The baked-DB custom AMI is **no longer referenced**:
 > verified nothing `!Ref`s `EcsAmiId` (cfn-lint emits `W2001 EcsAmiId not used`)
 > and all four launch templates resolve to `ThinEcsAmiId`. The whole baked-AMI
-> path is dead weight and can be removed:
+> path is dead weight. Removal checklist (do the code + doc edits in one PR; the
+> AWS-side deletes are separate and irreversible — do them last, after a green
+> run on thin AMIs confirms nothing still depends on the AMI/SSM/FSR):
 >
-> - **batch-stack.yaml** — drop the `EcsAmiId` parameter and stop passing it in
->   `/deploy-stack` (the skill's `--parameter-overrides EcsAmiId=...` and the
->   SSM lookup step).
-> - **Packer pipeline** — `infra/packer/build-ami.sh`,
->   `infra/playbook-ami-v2-rebuild.md`, and the SSM param
->   `/nf-reads-profiler/ami-id`.
-> - **FSR** — `infra/packer/enable-fsr.sh` / `disable-fsr.sh` and the
->   README "enable FSR before a run" step (FSR only sped up dehydrating the
->   baked AMI's snapshot; thin AMIs don't need it).
+> **1. CloudFormation (`infra/batch-stack.yaml`)**
+> - Delete the `EcsAmiId` parameter (clears the `W2001` warning — re-lint to
+>   confirm it's the last orphan).
 >
-> Keep this section's S3-sync-at-boot description; delete the "Custom AMI with
-> pre-baked databases" paragraph above once the removal lands.
+> **2. `/deploy-stack` skill (`.claude/skills/deploy-stack/SKILL.md`)**
+> - Drop the SSM lookup of `/nf-reads-profiler/ami-id` and the
+>   `--parameter-overrides EcsAmiId=...` it feeds in. Keep the
+>   `update-compute-environment ... updateToLatestImageVersion: true` step —
+>   that's still needed so CEs pick up new *thin*-AMI launch-template versions.
+> - **Also fix two unrelated skill bugs found 2026-06-23:**
+>   - The `aws cloudformation deploy` command needs `--s3-bucket
+>     gutz-nf-reads-profilers-workdir --s3-prefix cfn-templates` — the template
+>     crossed the 51 KB inline limit, so a bare `deploy` now errors
+>     ("Templates with a size greater than 51,200 bytes must be deployed via an
+>     S3 Bucket").
+>   - The skill's `--parameter-overrides` omits `MaxvCPUsMedi` (and other
+>     non-default params). `aws cloudformation deploy` **preserves the stack's
+>     previous value** for any param not listed, so editing a param's `Default:`
+>     in the template has NO effect on redeploy — you must pass it explicitly.
+>     This bit us: a `Default: 192 -> 100` edit deployed as a no-op until
+>     `MaxvCPUsMedi=100` was added to the override list. Either add the param to
+>     the skill's list or note the gotcha there.
+>
+> **3. Packer pipeline (delete files + SSM param)**
+> - `infra/packer/build-ami.sh`, `infra/playbook-ami-v2-rebuild.md`.
+> - The SSM param: `aws ssm delete-parameter --name /nf-reads-profiler/ami-id
+>   --region us-east-2`.
+> - Deregister the orphaned baked AMI + delete its snapshot once nothing
+>   references it (check `aws ec2 describe-images --owners self`).
+>
+> **4. FSR (delete scripts + their README step)**
+> - `infra/packer/enable-fsr.sh`, `infra/packer/disable-fsr.sh`. FSR only sped up
+>   dehydrating the baked AMI's EBS snapshot on spot launch; thin AMIs carry no
+>   DB snapshot, so there's nothing to fast-restore.
+> - In the top-level `README.md` AWS Batch run playbook, remove step 1
+>   (`enable-fsr.sh`) and the matching step 5 (`disable-fsr.sh`) — they bracket
+>   the `nextflow run`. Make sure to leave the `vmtouch` MEDI-hash steps intact
+>   (those are unrelated to FSR).
+>
+> **5. Stale prose in THIS readme (all still describe the baked AMI as live):**
+> - "Database placement (worker-local EBS)" → "Custom AMI with pre-baked
+>   databases" paragraph above: replace with the S3-sync-at-boot description
+>   (already in ADR-001 / `infra/multiqueue-design.md`).
+> - Part 2 deploy: "The skill looks up the custom worker AMI from SSM…".
+> - Pre-run checklist step 3: "DB source bucket … only used by Packer at AMI
+>   bake time" — workers now hit it at boot, so this check is no longer a no-op.
+> - "Database paths": "Workers boot with `/mnt/dbs/` already populated by the
+>   custom AMI — no runtime S3 sync" — now the opposite.
+> - Troubleshooting "ChocoPhlAn database does not exist": its three causes and
+>   the "rebuild the AMI" fix are baked-AMI-era. The failure mode is back to the
+>   pre-I14 S3-sync race; rewrite per `infra/multiqueue-design.md` and the
+>   per-queue boot-sync blocks in `batch-stack.yaml`.
 
 ---
 

@@ -132,13 +132,18 @@ Parameters:
 
   MaxvCPUsMedi:
     Type: Number
-    Default: 192
+    Default: 100
     Description: >
       Maximum vCPUs for the spot-medi compute environment (MEDI_QUANT:*).
-      Spot-only; no on-demand fallback. Sized for ~one big RAM node: 192 = one
-      192-vCPU metal (m8gd/r8gd.metal-48xl) OR up to two 96-vCPU 24xl boxes.
-      MEDI jobs run 15-40 s each once the Kraken hash is RAM-warm, so one node's
-      worth of parallelism clears the queue fast — no need for many DB nodes.
+      Spot-only; no on-demand fallback. Capped at 100 so exactly ONE 96-vCPU
+      box (r8gd.metal-24xl / i8g.24xlarge / r8gd.24xlarge) can launch — a second
+      96-vCPU box (192 > 100) or the 192-vCPU 48xl metal pools (192 > 100) won't
+      fit. The dominant cost is boot: each VM warms the 414 GiB Kraken hash into
+      RAM (minutes), while MEDI jobs run 15-40 s each once warm. One box amortises
+      that boot once and its 96 lanes clear the queue fast, so capping at one box
+      beats letting price-capacity-optimized grab two cheap 96s (2x boot tax).
+      The three 192-vCPU 48xl pools in InstanceTypes are now unreachable at this
+      cap (kept only as latent depth if MaxvCPUsMedi is ever raised).
 
   MediDbS3Uri:
     Type: String
@@ -886,11 +891,16 @@ Resources:
                  --include "taxo.k2d" \
                  --include "*mers.kmer_distrib" \
                  --include "food_matches.csv" \
-                 --include "food_contents.csv.gz"; then
+                 --include "food_contents.csv.gz" \
+                 --include "taxonomy/nodes.dmp" \
+                 --include "taxonomy/names.dmp" \
+                 --include "taxonomy/merged.dmp" \
+                 --include "taxonomy/delnodes.dmp"; then
               echo "FATAL: MEDI DB sync failed — worker will not be useful" >&2
               exit 1
             fi
-            for f in hash.k2d opts.k2d taxo.k2d food_matches.csv food_contents.csv.gz; do
+            for f in hash.k2d opts.k2d taxo.k2d food_matches.csv food_contents.csv.gz \
+                     taxonomy/nodes.dmp taxonomy/names.dmp taxonomy/merged.dmp taxonomy/delnodes.dmp; do
               [ -s "/mnt/dbs/medi_db/$f" ] || { echo "FATAL: /mnt/dbs/medi_db/$f missing/empty" >&2; exit 1; }
             done
             echo "OK: MEDI DB staged ($(du -sh /mnt/dbs/medi_db | cut -f1))"
