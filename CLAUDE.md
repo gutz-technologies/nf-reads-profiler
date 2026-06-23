@@ -74,8 +74,8 @@ dashboard, budget — stack `nf-reads-profiler-monitoring`, split out at the
 deploy compute first). Lint both with `cfn-lint infra/*.yaml` (no size limit,
 unlike `validate-template`); `/deploy-stack` deploys both in order. Region
 `us-east-2`, account `730883236839`.
-All compute is **Graviton (ARM64)** — runner and workers both. Three job queues
-(`spot-queue`, `spot-metaphlan`, `spot-humann`):
+All compute is **Graviton (ARM64)** — runner and workers both. Four job queues
+(`spot-queue`, `spot-metaphlan`, `spot-humann`, `spot-medi`):
 
 - `spot-queue` — default for all DB-free glue jobs (count/clean/combine/multiqc/
   SRA ingest). Two CEs: spot (primary) + on-demand (fallback). Now uses the thin
@@ -83,13 +83,20 @@ All compute is **Graviton (ARM64)** — runner and workers both. Three job queue
 - `spot-metaphlan` — `profile_taxa` + `STRAINPHLAN:*` only (routed via
   `withName ... queue =` in `conf/aws_batch.config`). Spot-only, single CE,
   thin stock AMI that copies vJan25 from S3 at boot (~3–5 min/instance, no FSR,
-  no Packer rebuild).
+  no Packer rebuild). `MaxvCPUsMetaphlan=200` (bumped from 100, 2026-06-23) — a
+  single 192-vCPU VM (or two 96-vCPU VMs) can launch, but not a second 192-vCPU
+  box (384 > 200), so the 192-vCPU pools in its `InstanceTypes` are now live.
 - `spot-humann` — `profile_function` only. Spot-only, single CE, thin AMI that
-  syncs the HUMAnN DB set (~65 GiB) from S3 at boot. The per-database-queue
-  pattern (and the planned `spot-medi`) is documented in
-  `infra/multiqueue-design.md`. NOTE: with all three queues on thin AMIs, the
-  baked-DB custom AMI (`EcsAmiId`) and its FSR/Packer pipeline are now orphaned
-  — candidate for removal.
+  syncs the HUMAnN DB set (~65 GiB) from S3 at boot. `MaxvCPUsHumann=960`
+  (~60 concurrent jobs).
+- `spot-medi` — MEDI subworkflow. Spot-only, single CE, thin AMI. The
+  per-database-queue pattern is documented in `infra/multiqueue-design.md`.
+
+All four queues run thin AMIs. The baked-DB custom AMI (`EcsAmiId`) is now
+**fully orphaned**: verified 2026-06-23 that nothing `!Ref`s it (cfn-lint
+W2001) — all four launch templates boot `ThinEcsAmiId` (the stock AL2023 ECS
+ARM64 AMI). The `EcsAmiId` param and its FSR/Packer pipeline are dead weight,
+safe to remove.
 
 Two S3 buckets:
 
