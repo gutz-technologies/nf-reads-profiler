@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # bin/scrape_last_local_log.sh
-# Google Gemini 3.5 Flash with an example .nextflow.log file
 
 set -euo pipefail
 
@@ -44,47 +43,69 @@ if [ "$IS_COMPLETE" = true ] && [ "$IS_FAILED" = false ]; then
 elif [ "$IS_FAILED" = true ]; then
     echo "Status:       FAILED"
 else
-    echo "Status:       IN PROGRESS (or interrupted)"
+    echo "Status:       IN PROGRESS"
 fi
 echo "-----------------------------------------"
 
-# 3. Stats Generation
-STATS_LINE=$(grep "WorkflowStats\[" "$LOG_FILE" | tail -n 1 || true)
+# 3. Process Task Counts (Succeeded, Cached, Failed, Active)
+awk '
+/Cached process >/ {
+    match($0, /Cached process > .*/)
+    name_raw = substr($0, RSTART + 17, RLENGTH - 17)
+    split(name_raw, name_arr, " \\(")
+    name_part = name_arr[1]
+    sub(/ *$/, "", name_part)
+    cached[name_part]++
+    all_processes[name_part] = 1
+}
+/Submitted process >/ {
+    match($0, /Submitted process > .*/)
+    name_raw = substr($0, RSTART + 20, RLENGTH - 20)
+    split(name_raw, name_arr, " \\(")
+    name_part = name_arr[1]
+    sub(/ *$/, "", name_part)
+    submitted[name_part]++
+    all_processes[name_part] = 1
+}
+/Task completed > TaskHandler/ {
+    # Extract name
+    match($0, /name: [^;]+/)
+    name_raw = substr($0, RSTART + 6, RLENGTH - 6)
+    split(name_raw, name_arr, " \\(")
+    name_part = name_arr[1]
+    sub(/ *$/, "", name_part)
 
-if [ -n "$STATS_LINE" ]; then
-    # Parse final stats from completed run
-    SUCCEEDED=$(echo "$STATS_LINE" | sed -n 's/.*succeededCount=\([0-9]*\).*/\1/p' || echo 0)
-    FAILED=$(echo "$STATS_LINE" | sed -n 's/.*failedCount=\([0-9]*\).*/\1/p' || echo 0)
-    CACHED=$(echo "$STATS_LINE" | sed -n 's/.*cachedCount=\([0-9]*\).*/\1/p' || echo 0)
-    DURATION=$(echo "$STATS_LINE" | sed -n 's/.*succeedDuration=\([^;]*\).*/\1/p' || echo "Unknown")
-    PEAK_CPUS=$(echo "$STATS_LINE" | sed -n 's/.*peakCpus=\([0-9]*\).*/\1/p' || echo "Unknown")
-    PEAK_MEM=$(echo "$STATS_LINE" | sed -n 's/.*peakMemory=\([^;]*\).*/\1/p' || echo "Unknown")
+    # Extract exit code
+    match($0, /exit: [^;]+/)
+    exit_part = substr($0, RSTART + 6, RLENGTH - 6)
 
-    echo "Succeeded Tasks: $SUCCEEDED"
-    echo "Cached Tasks:    $CACHED"
-    echo "Failed Tasks:    $FAILED"
-    echo "Total Duration:  $DURATION"
-    echo "Peak CPUs:       $PEAK_CPUS"
-    echo "Peak Memory:     $PEAK_MEM"
-else
-    # Parse live progress for active run
-    CACHED=$(grep -c "Cached process >" "$LOG_FILE" || echo 0)
-    SUBMITTED=$(grep -c "Submitted process >" "$LOG_FILE" || echo 0)
-    COMPLETED=$(grep -c "Task completed >" "$LOG_FILE" || echo 0)
-    FAILED=$(grep -c -E "Task failed >|exit: [1-9]" "$LOG_FILE" || echo 0)
-    ACTIVE_TASKS=$(grep "tasks to be completed:" "$LOG_FILE" | tail -n 1 | sed -n 's/.*tasks to be completed: \([0-9]*\).*/\1/p' || echo 0)
+    # Extract status
+    match($0, /status: [^;]+/)
+    status_part = substr($0, RSTART + 8, RLENGTH - 8)
 
-    echo "Cached Tasks:    $CACHED"
-    echo "Submitted Tasks: $SUBMITTED"
-    echo "Completed Tasks: $COMPLETED"
-    echo "Failed Tasks:    $FAILED"
-    echo "Active Tasks (last check): $ACTIVE_TASKS"
-fi
+    if (submitted[name_part] > 0) {
+        submitted[name_part]--
+    }
 
-# 4. Recent Activity (Last 5 events)
-echo "-----------------------------------------"
-echo "Recent Actions:"
-grep -E "Task completed >|Task failed >|Submitted process >|Cached process >" "$LOG_FILE" | tail -n 5 | \
-    sed -E 's/.*(Task completed >|Task failed >|Submitted process >|Cached process > )/\1/' || \
-    echo "No recent task events found."
+    if (exit_part == "0" && (status_part == "COMPLETED" || status_part == "SUCCESS")) {
+        succeeded[name_part]++
+    } else {
+        failed[name_part]++
+    }
+    all_processes[name_part] = 1
+}
+END {
+    # Sort and print process table
+    printf "%-35s %-11s %-10s %-10s %-10s\n", "Process Name", "Succeeded", "Cached", "Failed", "Active"
+    print "--------------------------------------------------------------------------------"
+    PROCINFO["sorted_in"] = "@ind_str_asc"
+    for (p in all_processes) {
+        s = succeeded[p] ? succeeded[p] : 0
+        c = cached[p] ? cached[p] : 0
+        f = failed[p] ? failed[p] : 0
+        act = submitted[p] ? submitted[p] : 0
+        printf "%-35s %-11d %-10d %-10d %-10d\n", p, s, c, f, act
+    }
+}
+' "$LOG_FILE"
 echo "========================================="
