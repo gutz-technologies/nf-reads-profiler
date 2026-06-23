@@ -38,7 +38,7 @@ Show the AMI ID to the user for confirmation before proceeding.
 Use `cfn-lint` (no 51 KB inline limit, stricter than `validate-template`):
 
 ```bash
-cfn-lint infra/batch-stack.yaml infra/batch-watcher.yaml
+cfn-lint infra/batch-stack.yaml infra/batch-dashboard.yaml
 ```
 
 If linting fails, stop and report the error. (A `W2001 EcsAmiId not used`
@@ -47,7 +47,7 @@ the param is still passed below but no longer referenced.)
 
 ### 3. Deploy the compute stack
 
-Budget/alarm/dashboard resources moved to batch-watcher.yaml (step 4b), so
+Budget/alarm/dashboard resources moved to batch-dashboard.yaml (step 4b), so
 `BudgetAlertEmail`/`MonthlyBudgetThreshold` are NOT passed here anymore.
 
 ```bash
@@ -90,7 +90,7 @@ churn.
 ```bash
 aws cloudformation deploy \
   --stack-name nf-reads-profiler-monitoring \
-  --template-file infra/batch-watcher.yaml \
+  --template-file infra/batch-dashboard.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-2 \
   --parameter-overrides \
