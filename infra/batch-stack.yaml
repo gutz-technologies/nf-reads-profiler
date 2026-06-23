@@ -79,7 +79,7 @@ Parameters:
       under a ~1000-core total budget alongside spot-metaphlan (100). Bumped
       from 600 mid-run on the cosmosid-infant cohort (2026-06-23).
 
-  # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/monitoring-stack.yaml
+  # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/batch-watcher.yaml
   # (budget, SNS topic, and alarms live there now).
 
   ProjectTag:
@@ -474,7 +474,7 @@ Resources:
           - Sid: PassLambdaRole
             Effect: Allow
             Action: iam:PassRole
-            # Both metrics lambdas live in monitoring-stack.yaml now; match by
+            # Both metrics lambdas live in batch-watcher.yaml now; match by
             # name pattern so the runner can (re)deploy that stack.
             Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectTag}-*-lambda-role"
             Condition:
@@ -1245,6 +1245,12 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-HumannQueueArn"
 
+  MediQueueArn:
+    Description: ARN of the spot-medi job queue (MEDI_QUANT:*)
+    Value: !GetAtt MediQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-MediQueueArn"
+
   BatchJobRoleArn:
     Description: >
       ARN of the ECS task role for Batch jobs. Add to conf/aws_batch.config:
@@ -1267,7 +1273,7 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-WorkDirBucket"
 
-  # DashboardUrl moved to infra/monitoring-stack.yaml (split out at the 51 KB
+  # DashboardUrl moved to infra/batch-watcher.yaml (split out at the 51 KB
   # inline-template limit). The dashboard name is unchanged (${ProjectTag}-batch).
 
   BatchConsoleUrl:

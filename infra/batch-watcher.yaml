@@ -6,10 +6,10 @@ Description: >
   publishes AWS/Batch job metrics (Batch does not emit them natively), the
   multi-queue CloudWatch dashboard, and the monthly budget.
 
-  Coupling is one-directional: this stack imports the three job-queue ARNs that
+  Coupling is one-directional: this stack imports the four job-queue ARNs that
   batch-stack.yaml exports (<BatchStackName>-SpotQueueArn / -MetaphlanQueueArn /
-  -HumannQueueArn). Deploy batch-stack.yaml FIRST. Updating dashboards/alarms
-  here never touches live compute.
+  -HumannQueueArn / -MediQueueArn). Deploy batch-stack.yaml FIRST. Updating
+  dashboards/alarms here never touches live compute.
 
 Parameters:
   BatchStackName:
@@ -227,8 +227,8 @@ Resources:
 # gauge polled every 60s via list-jobs. The previous design emitted
 # value=1 per state-change event, which gave the alarm at most "1" to
 # look at; with this Lambda the alarm sees real queue depth.
-# Polls ALL THREE queues (spot-queue, spot-metaphlan, spot-humann) so the
-# per-queue dashboard depth widgets populate, not just spot-queue.
+# Polls ALL FOUR queues (spot-queue, spot-metaphlan, spot-humann, spot-medi) so
+# the per-queue dashboard depth widgets populate, not just spot-queue.
 # ---------------------------------------------------------------------------
 
   BatchQueueDepthLambdaRole:
@@ -281,6 +281,7 @@ Resources:
             - - Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
               - Fn::ImportValue: !Sub "${BatchStackName}-MetaphlanQueueArn"
               - Fn::ImportValue: !Sub "${BatchStackName}-HumannQueueArn"
+              - Fn::ImportValue: !Sub "${BatchStackName}-MediQueueArn"
       Code:
         ZipFile: |
           import os
@@ -324,7 +325,7 @@ Resources:
                           'Value': count_jobs(queue, status),
                           'Unit': 'Count',
                       })
-              # PutMetricData caps at 1000 metrics/call; 3 queues x 5 statuses = 15.
+              # PutMetricData caps at 1000 metrics/call; 4 queues x 5 statuses = 20.
               cw.put_metric_data(Namespace='AWS/Batch', MetricData=metric_data)
       Tags:
         - Key: Project
@@ -421,6 +422,25 @@ Resources:
                 }
               },
               {
+                "type": "metric",
+                "x": 0, "y": 12, "width": 8, "height": 6,
+                "properties": {
+                  "title": "Job Status — spot-medi (MEDI_QUANT)",
+                  "metrics": [
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MediQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MediQueueArn}", {"color": "#d62728", "label": "Failed"}],
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#9467bd", "label": "Starting"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#17becf", "label": "Running"}]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "view": "timeSeries",
+                  "region": "${AWS::Region}"
+                }
+              },
+              {
                 "type": "alarm",
                 "x": 0, "y": 6, "width": 8, "height": 6,
                 "properties": {
@@ -442,7 +462,9 @@ Resources:
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MetaphlanQueueArn}", {"color": "#98df8a", "label": "metaphlan ✓"}],
                     ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MetaphlanQueueArn}", {"color": "#ff9896", "label": "metaphlan ✗"}],
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${HumannQueueArn}",    {"color": "#1f77b4", "label": "humann ✓"}],
-                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${HumannQueueArn}",    {"color": "#ff7f0e", "label": "humann ✗"}]
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${HumannQueueArn}",    {"color": "#ff7f0e", "label": "humann ✗"}],
+                    ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MediQueueArn}",      {"color": "#8c564b", "label": "medi ✓"}],
+                    ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MediQueueArn}",      {"color": "#e377c2", "label": "medi ✗"}]
                   ],
                   "period": 3600,
                   "stat": "Sum",
@@ -458,6 +480,8 @@ Resources:
             Fn::ImportValue: !Sub "${BatchStackName}-MetaphlanQueueArn"
           HumannQueueArn:
             Fn::ImportValue: !Sub "${BatchStackName}-HumannQueueArn"
+          MediQueueArn:
+            Fn::ImportValue: !Sub "${BatchStackName}-MediQueueArn"
     DependsOn:
       - FailedJobsAlarm
       - RunnableJobsAlarm

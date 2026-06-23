@@ -67,7 +67,7 @@ gated on `params.humann_regroup` (off by default).
 ## AWS Batch infra
 
 Managed by two CloudFormation templates: `infra/batch-stack.yaml` (compute —
-stack `nf-reads-profiler-batch`) and `infra/monitoring-stack.yaml`
+stack `nf-reads-profiler-batch`) and `infra/batch-watcher.yaml`
 (observability: SNS topic, alarms, EventBridge→Lambda metric publishers,
 dashboard, budget — stack `nf-reads-profiler-monitoring`, split out at the
 51 KB inline-template limit; imports the compute stack's queue-ARN exports, so
