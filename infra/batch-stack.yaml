@@ -933,7 +933,7 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: SPOT
-        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
         BidPercentage: !Ref SpotBidPercentage
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCPUsSpot
@@ -1013,7 +1013,7 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: SPOT
-        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
         BidPercentage: !Ref SpotBidPercentage
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCPUsMetaphlan
@@ -1060,7 +1060,7 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: SPOT
-        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
         BidPercentage: !Ref SpotBidPercentage
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCPUsHumann
@@ -1115,7 +1115,7 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: SPOT
-        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
         BidPercentage: !Ref SpotBidPercentage
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCPUsMedi
