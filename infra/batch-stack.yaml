@@ -59,12 +59,13 @@ Parameters:
 
   MaxvCPUsMetaphlan:
     Type: Number
-    Default: 100
+    Default: 200
     Description: >
       Maximum vCPUs for the spot-metaphlan compute environment (profile_taxa +
       StrainPhlAn). Spot-only; no on-demand fallback. Capped just above one
-      r8g.metal-24xl (96 vCPU) so Batch can launch exactly one bare-metal VM
-      and no second one (192 > 100).
+      192-vCPU box so Batch can launch a single 192-vCPU VM (or two 96-vCPU
+      VMs) but not a second 192-vCPU VM (384 > 200). Bumped 100->200
+      2026-06-23 to let the 192-vCPU pools launch.
 
   MaxvCPUsHumann:
     Type: Number
@@ -1019,11 +1020,9 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          # All <5% historical interruption and <$0.006/vCPU/hr. NOTE: the 192-vCPU
-          # types are INERT here while MaxvCPUsMetaphlan=100 — Batch won't launch an
-          # instance whose vCPUs exceed the cap. Staged for if/when the cap is raised;
-          # today only the <=96-vCPU pools can launch (c8g.12xlarge 48-vCPU and the
-          # 96-vCPU *.24xl pools, metal + c8gd).
+          # All <5% historical interruption and <$0.006/vCPU/hr. With
+          # MaxvCPUsMetaphlan=200 every pool here can launch one VM (192 < 200);
+          # a second 192-vCPU VM is blocked (384 > 200), two 96-vCPU VMs fit.
           - c8g.12xlarge      # 48 vCPU / 96 GB — deeper pool, good $/vCPU
           - c8g.48xlarge      # 192 vCPU / 384 GB — staged (cap-gated)
           - c8gd.24xlarge     # 96 vCPU / 192 GB + local NVMe — separate spot pool
