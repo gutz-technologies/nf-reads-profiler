@@ -147,6 +147,17 @@ is documented in [ADR-001](adr-001-db-placement.md), now superseded.
 >     This bit us: a `Default: 192 -> 100` edit deployed as a no-op until
 >     `MaxvCPUsMedi=100` was added to the override list. Either add the param to
 >     the skill's list or note the gotcha there.
+>   - **Step 5 (force CE refresh) only touches the spot-queue CEs** — it derives
+>     `CE_SPOT`/`CE_ONDEMAND` from `spot-queue` and the LT
+>     `nf-reads-profiler-worker`. The metaphlan/humann/medi CEs (each with its
+>     own LT, e.g. medi's `MediWorkerLaunchTemplate`) are **never force-rolled**,
+>     so a UserData change to those queues silently won't take — Batch keeps
+>     booting the cached LT version even though the CE references `$Latest`. This
+>     bit us: the `taxonomy/*.dmp` boot-sync fix sat inert on LT v3 while running
+>     medi instances kept failing with `exit 255`, until a manual
+>     `update-compute-environment ... updateToLatestImageVersion:true` on the
+>     medi CE rolled it. Extend step 5 to force-refresh ALL four CEs (loop over
+>     each queue's CE + its LT), not just spot-queue.
 >
 > **3. Packer pipeline (delete files + SSM param)**
 > - `infra/packer/build-ami.sh`, `infra/playbook-ami-v2-rebuild.md`.
