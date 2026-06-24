@@ -160,16 +160,17 @@ workflow STRAINPHLAN {
         sams   // channel of [meta, sam.bz2] from profile_taxa.out.sam
 
     main:
-        // STEP 1: gather each run's SAMs, then chop into fixed-size batches of 10 so a
-        // single sample2markers job never grows with run size. collate(10) splits each
-        // run's list into <=10-sample chunks; flatMap emits one (run, batch_idx, chunk)
+        // STEP 1: gather each run's SAMs, then chop into fixed-size batches so a
+        // single sample2markers job never grows with run size. collate(N) splits each
+        // run's list into <=N-sample chunks; flatMap emits one (run, batch_idx, chunk)
         // tuple per chunk -> one parallel job each. Batches stay within a run so each
-        // output marker tags back to the right run.
+        // output marker tags back to the right run. N = params.strainphlan_batch_size
+        // (default 10); keep it a multiple of the task's nprocs for even waves.
         sams_batched = sams
             .map { meta, sam -> [ meta.run, sam ] }
             .groupTuple()
             .flatMap { run, sms ->
-                sms.collate(10).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
+                sms.collate(params.strainphlan_batch_size).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
             }
 
         sample2markers(sams_batched)
