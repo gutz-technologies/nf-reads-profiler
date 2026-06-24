@@ -96,7 +96,10 @@ awk '
 }
 END {
     # Sort and print process table
-    printf "%-35s %-11s %-10s %-10s %-10s\n", "Process Name", "Succeeded", "Cached", "Failed", "Active"
+    # "Pending" = submitted-but-not-completed = RUNNING + RUNNABLE(queued) + STARTING.
+    # On AWS Batch this is mostly the queue backlog, not actively-running tasks; the
+    # INFO log has no RUNNABLE->RUNNING line, so true "running" is not derivable here.
+    printf "%-35s %-11s %-10s %-10s %-10s\n", "Process Name", "Succeeded", "Cached", "Failed", "Pending"
     print "--------------------------------------------------------------------------------"
     PROCINFO["sorted_in"] = "@ind_str_asc"
     for (p in all_processes) {
