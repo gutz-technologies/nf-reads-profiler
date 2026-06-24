@@ -162,10 +162,9 @@ Kraken2 intermediates (`.k2`/`.tsv`) and the Bracken `*_bracken.tsv` side-file a
 **not** published — they flow through channels only (publishDir commented out in
 `subworkflows/quant.nf`).
 
-StrainPhlAn runs only with `--enable_strainphlan` (default off). `profile_taxa`
-always emits a MetaPhlAn SAM per sample (workdir-only, **not** published);
-`--enable_strainphlan` gates only whether the StrainPhlAn subworkflow consumes it,
-so toggling the flag does not re-run MetaPhlAn. `--strainphlan_clades` is a comma-separated clade
+StrainPhlAn runs only with `--enable_strainphlan` (default off), which switches
+`profile_taxa` from `--no_map` to emitting a MetaPhlAn SAM per sample (the SAM
+itself is **not** published). `--strainphlan_clades` is a comma-separated clade
 list (e.g. `"t__SGB1877,t__SGB2318"`) to build trees for; empty (default) stops
 after `print_clades`, which reports the available clades. `--enable_strainphlan`
 is incompatible with `skipCompleted`: skipped samples would drop from the per-run

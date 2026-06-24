@@ -34,12 +34,8 @@ subworkflows:
   Bracken → food-content quantification), gated on `params.enable_medi`.
 - `subworkflows/strainphlan.nf` — `STRAINPHLAN` (sample2markers → print_clades →
   extract_markers → strainphlan tree), gated on `params.enable_strainphlan`.
-  Consumes `profile_taxa.out.sam`. `profile_taxa` **always** runs MetaPhlAn with
-  `-s <id>.sam.bz2` (SAM emitted on every run, workdir-only, not published);
-  `enable_strainphlan` gates *only* this subworkflow, not the MetaPhlAn command.
-  This is deliberate: keeping the `profile_taxa` command constant means toggling
-  strainphlan on/off does NOT invalidate its cache (the old `-s` vs `--no_map`
-  switch re-ran every sample). `print_clades` and
+  Consumes `profile_taxa.out.sam` — when `enable_strainphlan=true`, `profile_taxa`
+  runs MetaPhlAn with `-s <id>.sam.bz2` instead of `--no_map`. `print_clades` and
   the per-clade RAxML tree are **per-run reduces** (`groupTuple` on `meta.run`);
   with `strainphlan_clades` empty (default) it stops after `print_clades`, which
   reports which clades are available before you commit to trees. Incompatible

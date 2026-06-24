@@ -28,21 +28,15 @@ process profile_taxa {
 
   output:
   tuple val(meta), path("*_metaphlan.biom"), emit: to_profile_function_bugs
-  // SAM is ALWAYS emitted (-s), decoupled from enable_strainphlan: that flag now
-  // gates only the STRAINPHLAN subworkflow in main.nf, not this command. Keeping
-  // the metaphlan command constant means toggling strainphlan on/off does NOT
-  // invalidate the profile_taxa cache (a -s vs --no_map switch used to re-run all
-  // samples). Cost: the SAM (unpublished, workdir-only) is produced on every run
-  // even when strain tracking is off — accepted as cheap insurance vs re-running
-  // the 16-cpu metaphlan stage. optional:true guards zero-alignment edge cases.
-  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: true
+  // SAM alignment when --enable_strainphlan, otherwise --no_map
+  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: !params.enable_strainphlan
   // tuple val(meta), path("*_profile_taxa_mqc.yaml"), emit: profile_taxa_log
 
 
   script:
   name = task.ext.name ?: "${meta.id}"
   run = task.ext.run ?: "${meta.run}"
-  sam_opts = "-s ${name}.sam.bz2"
+  sam_opts = params.enable_strainphlan ? "-s ${name}.sam.bz2" : "--no_map"
   """
   echo ${params.direct_metaphlan_db}
 
