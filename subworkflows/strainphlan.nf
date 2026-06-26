@@ -21,12 +21,6 @@
 */
 
 // STEP 1 — consensus markers from MetaPhlAn SAMs, in fixed-size sample batches.
-// sample2markers.py loads the (large) MetaPhlAn .pkl once per invocation and runs
-// the batch's SAMs --nprocs-parallel. The workflow chunks each run into batches (see
-// STRAINPHLAN main) so a single job never scales with run size — runtime and
-// spot-reclaim blast radius stay bounded. Output is per-sample and identical
-// regardless of how SAMs are batched. cpus drives --nprocs; cpus + memory in
-// conf/aws_batch.config.
 process sample2markers {
 
     tag "${run} batch ${batch} (${sams instanceof List ? sams.size() : 1} samples)"
@@ -41,8 +35,9 @@ process sample2markers {
 
     script:
     // MEMORY: --nprocs loads the DB once, but still needs a full copy per thread.
-    // Measured at 13.2 GB * threads for metaphlan vJan25. Make sure threads don't
-    // exceed the memory! Size cpus/memory together in conf/aws_batch.config.
+    // Measured at 15 GB/thread max for metaphlan vJan25,
+    // Size cpus/memory together in conf/aws_batch.config.
+    // Too little memory causes silent hangs after OOM kill is ignored
     """
     sample2markers.py \\
         -i ${sams} \\
@@ -65,8 +60,7 @@ process print_clades {
     tuple val(run), path(markers)
 
     output:
-    // StrainPhlAn --print_clades_only writes the clade table to print_clades_only.tsv
-    // in the output dir (not stdout).
+    // StrainPhlAn --print_clades_only actualy writes a file, not stdout
     tuple val(run), path("print_clades_only.tsv"), emit: clades
 
     script:
@@ -161,16 +155,15 @@ workflow STRAINPHLAN {
 
     main:
         // STEP 1: gather each run's SAMs, then chop into fixed-size batches so a
-        // single sample2markers job never grows with run size. collate(N) splits each
-        // run's list into <=N-sample chunks; flatMap emits one (run, batch_idx, chunk)
-        // tuple per chunk -> one parallel job each. Batches stay within a run so each
-        // output marker tags back to the right run. N = params.strainphlan_batch_size
-        // (default 10); keep it a multiple of the task's nprocs for even waves.
+        // single sample2markers job never grows with run size. Batches stay
+        // within a run so each output marker tags back to the right run.
+        // Sort by filename BEFORE collate. Sorting makes batch membership a
+        // pure function of the SAM set, so a -resume cache-hits all markers.
         sams_batched = sams
             .map { meta, sam -> [ meta.run, sam ] }
             .groupTuple()
             .flatMap { run, sms ->
-                sms.collate(params.strainphlan_batch_size).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
+                sms.sort { sam -> sam.name }.collate(params.strainphlan_batch_size).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
             }
 
         sample2markers(sams_batched)
