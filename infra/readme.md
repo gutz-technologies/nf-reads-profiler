@@ -111,9 +111,7 @@ installs awscli and copies only the DBs that queue needs from S3
 (`DbSourceBucket`, default `cjb-gutz-s3-demo`) into `/mnt/dbs/` before ECS
 registers. The sync is **synchronous** — it gates ECS registration so a job
 never lands on a worker with a half-populated `/mnt/dbs/`. The per-database-queue
-design is documented in `infra/multiqueue-design.md`; the original
-DB-placement history is in [ADR-001](adr-001-db-placement.md) and
-`issues/I14-custom-ami-worker.md`.
+design is documented in `infra/multiqueue-design.md`.
 
 The earlier baked-DB custom AMI (Packer-built, `/mnt/dbs/` pre-populated) was
 retired 2026-06 once all four queues moved to thin AMIs; its Packer/FSR pipeline

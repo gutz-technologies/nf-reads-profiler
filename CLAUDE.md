@@ -231,9 +231,8 @@ When a pipeline run fails on AWS Batch, the diagnosis workflow is:
    `<job-def>/default/<job-id>`). The last few lines usually have the root
    cause.
 3. **Check worker state** — if the error is a missing file/DB, the database
-   may not be present. Currently this means the S3 sync didn't complete;
-   after the custom AMI migration (see `issues/I14-custom-ami-worker.md`),
-   it means the wrong AMI was used. Connect to the worker (if still running)
+   may not be present — the boot-time S3 sync didn't complete (all queues run
+   thin AMIs that sync DBs at boot). Connect to the worker (if still running)
    and check `/var/log/nf-userdata.log` and `ls /mnt/dbs/`. No SSH/keys — use
    SSM: `aws ssm start-session --target <instance-id> --region us-east-2`
    from a human operator's own AWS CLI session (their IAM identity has
@@ -242,8 +241,8 @@ When a pipeline run fails on AWS Batch, the diagnosis workflow is:
    design — SSM is for human watchers, not the automation. If Claude needs
    worker-side visibility, use CloudWatch logs (`/aws/batch/job`) instead.
 4. **Common failure modes**:
-   - "database does not exist" → S3 sync race or wrong AMI (see
-     `infra/readme.md` troubleshooting and `issues/I14-custom-ami-worker.md`).
+   - "database does not exist" → S3 boot-sync race or incomplete sync (see
+     `infra/readme.md` troubleshooting).
    - "Essential container in task exited" → container OOM or command error;
      check CloudWatch logs for the specific error.
    - "Job killed by NF" → Nextflow aborted the run after a different task

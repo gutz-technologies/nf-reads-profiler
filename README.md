@@ -91,14 +91,6 @@ Don't rely on the `screen` session disappearing — if you launched with
 `screen -dmS name bash -c "... | tee ..."`, the session ends the instant the
 command returns, so its absence tells you nothing about success vs. failure.
 
-### Infrastructure scripts
-
-| Script | Purpose |
-|--------|---------|
-| `infra/smoke-test.sh` | 2-sample end-to-end smoke test on AWS Batch |
-| `infra/max005_test.sh` | 5-sample scaling baseline (I16); must run under screen |
-| `infra/medi_test.sh` | Full MEDI end-to-end test; must run under screen |
-
 ## Output
 
 All results land under `outdir/<project>/`. Three tiers: per-sample → per-study
@@ -176,6 +168,7 @@ Staging paths differ per profile:
   `s3://cjb-gutz-s3-demo` to the instance-store RAID at `/mnt/scratch/ssddbs/`.
   `docker.runOptions` in `nextflow.config` bind-mounts this into Docker. vJan25
   was installed via `metaphlan --install` and is now in both ssddbs and S3.
-- AWS: `/mnt/dbs/...` — pre-baked custom AMI (Packer, see
-  `issues/I14-custom-ami-worker.md`). The `spot-metaphlan` queue instead copies
-  vJan25 from S3 at boot (see `infra/multiqueue-design.md`).
+- AWS: `/mnt/dbs/...` — each per-database queue's workers sync their DB set from
+  S3 to `/mnt/dbs/` at boot on the thin stock AMI (no baked DBs). The
+  `spot-metaphlan` queue copies vJan25 from S3 (see
+  `infra/multiqueue-design.md`).
