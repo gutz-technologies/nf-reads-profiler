@@ -119,6 +119,18 @@ The earlier baked-DB custom AMI (Packer-built, `/mnt/dbs/` pre-populated) was
 retired 2026-06 once all four queues moved to thin AMIs; its Packer/FSR pipeline
 and the `EcsAmiId` parameter have been removed.
 
+> **Baked-AMI teardown debrief (2026-06-26).** Code/docs removed in commit
+> `e486c96`. AWS-side cleanup done: deregistered the two baked AMIs
+> (`ami-0b87926a60df7043e`, `ami-0b82e0161299a01ea`) and deleted their backing
+> snapshots (`snap-0c0778290c42dec46`, `snap-0e20eed57c3a5b848`) — that's the
+> only part with storage cost. **Left undone:** the SSM param
+> `/nf-reads-profiler/ami-id` still exists (a dangling pointer to a now-
+> deregistered AMI). Neither the runner `head-node-role` nor the IAM user
+> `colinbrislawn` has `ssm:DeleteParameter`, so it can't be deleted from here.
+> It is harmless ($0, nothing reads it). To remove it later, grant
+> `ssm:DeleteParameter` on that param ARN to an identity, then:
+> `aws ssm delete-parameter --name /nf-reads-profiler/ami-id --region us-east-2`.
+
 ---
 
 ### Prerequisites
