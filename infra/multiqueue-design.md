@@ -167,9 +167,9 @@ here on purpose). ~3–5 min for vJan25, amortized over every job on the instanc
   hash warm). Until then, the head node stays the MEDI executor.
 - **DB location: local `/mnt/scratch/ssddbs` retires with MEDI.** Two unrelated
   things share the `scratch` name — keep them straight:
-  - The **managed stack** never used `/mnt/scratch`. Baked workers stage DBs to
-    `/mnt/dbs/` (`worker-ami.pkr.hcl`), and the spot-metaphlan thin AMI copies
-    vJan25 to `/mnt/dbs/` at boot. This is the in-stack DB home.
+  - The **managed stack** never used `/mnt/scratch`. Thin-AMI workers copy the
+    DBs they need from S3 to `/mnt/dbs/` at boot (e.g. the spot-metaphlan thin
+    AMI copies vJan25). This is the in-stack DB home.
   - `/mnt/scratch/ssddbs` is the **local head/MEDI VM's** NVMe RAID — where local
     MEDI (and the `nextflow.config` base DB defaults + Docker bind-mount) read
     their DBs. That NVMe no longer exists on the current VM.

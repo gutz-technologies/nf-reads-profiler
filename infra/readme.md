@@ -97,97 +97,27 @@ S3: s3://gutz-nf-reads-profilers-runs  ← input + results    — DeletionPolicy
 
 ---
 
-### Database placement (worker-local EBS)
+### Database placement (S3 sync at boot)
 
 Databases (~65 GiB) live on each worker's local 500 GiB gp3 EBS volume at
 `/mnt/dbs/`. This keeps read performance high for random-seek tools (Bowtie2,
 DIAMOND). Database paths in `conf/aws_batch.config` point to `/mnt/dbs/...`.
 
-**Custom AMI with pre-baked databases.** Workers boot from a custom
-Packer-built AMI with `/mnt/dbs/` already populated and Miniconda/awscli
-already installed — no S3 sync happens at boot, ECS registers in
-seconds. The AMI is rebuilt with `infra/packer/build-ami.sh`, which
-publishes the new AMI ID to SSM `/nf-reads-profiler/ami-id`. The Batch
-stack reads that SSM parameter at deploy time. See
-`issues/I14-custom-ami-worker.md` for the original migration and
-`infra/playbook-ami-v2-rebuild.md` for the current rebuild flow.
+**Thin stock AMI + boot-time S3 sync.** All four queues (`spot-queue`,
+`spot-metaphlan`, `spot-humann`, `spot-medi`) boot from the thin stock AL2023
+ECS ARM64 AMI (`ThinEcsAmiId`, resolved from the AWS public SSM parameter — always
+current, no Packer rebuild). Each per-database queue's launch-template UserData
+installs awscli and copies only the DBs that queue needs from S3
+(`DbSourceBucket`, default `cjb-gutz-s3-demo`) into `/mnt/dbs/` before ECS
+registers. The sync is **synchronous** — it gates ECS registration so a job
+never lands on a worker with a half-populated `/mnt/dbs/`. The per-database-queue
+design is documented in `infra/multiqueue-design.md`; the original
+DB-placement history is in [ADR-001](adr-001-db-placement.md) and
+`issues/I14-custom-ami-worker.md`.
 
-The earlier S3-sync-at-boot model (~20 min boot delay for 30k objects)
-is documented in [ADR-001](adr-001-db-placement.md), now superseded.
-
-> **PLAN — remove the custom AMI / Packer / FSR pipeline (orphaned 2026-06-23).**
-> All four queues (`spot-queue`, `spot-metaphlan`, `spot-humann`, `spot-medi`)
-> now boot the thin stock AL2023 ECS ARM64 AMI (`ThinEcsAmiId`) and sync the DBs
-> they need from S3 at boot. The baked-DB custom AMI is **no longer referenced**:
-> verified nothing `!Ref`s `EcsAmiId` (cfn-lint emits `W2001 EcsAmiId not used`)
-> and all four launch templates resolve to `ThinEcsAmiId`. The whole baked-AMI
-> path is dead weight. Removal checklist (do the code + doc edits in one PR; the
-> AWS-side deletes are separate and irreversible — do them last, after a green
-> run on thin AMIs confirms nothing still depends on the AMI/SSM/FSR):
->
-> **1. CloudFormation (`infra/batch-stack.yaml`)**
-> - Delete the `EcsAmiId` parameter (clears the `W2001` warning — re-lint to
->   confirm it's the last orphan).
->
-> **2. `/deploy-stack` skill (`.claude/skills/deploy-stack/SKILL.md`)**
-> - Drop the SSM lookup of `/nf-reads-profiler/ami-id` and the
->   `--parameter-overrides EcsAmiId=...` it feeds in. Keep the
->   `update-compute-environment ... updateToLatestImageVersion: true` step —
->   that's still needed so CEs pick up new *thin*-AMI launch-template versions.
-> - **Also fix two unrelated skill bugs found 2026-06-23:**
->   - The `aws cloudformation deploy` command needs `--s3-bucket
->     gutz-nf-reads-profilers-workdir --s3-prefix cfn-templates` — the template
->     crossed the 51 KB inline limit, so a bare `deploy` now errors
->     ("Templates with a size greater than 51,200 bytes must be deployed via an
->     S3 Bucket").
->   - The skill's `--parameter-overrides` omits `MaxvCPUsMedi` (and other
->     non-default params). `aws cloudformation deploy` **preserves the stack's
->     previous value** for any param not listed, so editing a param's `Default:`
->     in the template has NO effect on redeploy — you must pass it explicitly.
->     This bit us: a `Default: 192 -> 100` edit deployed as a no-op until
->     `MaxvCPUsMedi=100` was added to the override list. Either add the param to
->     the skill's list or note the gotcha there.
->   - **Step 5 (force CE refresh) only touches the spot-queue CEs** — it derives
->     `CE_SPOT`/`CE_ONDEMAND` from `spot-queue` and the LT
->     `nf-reads-profiler-worker`. The metaphlan/humann/medi CEs (each with its
->     own LT, e.g. medi's `MediWorkerLaunchTemplate`) are **never force-rolled**,
->     so a UserData change to those queues silently won't take — Batch keeps
->     booting the cached LT version even though the CE references `$Latest`. This
->     bit us: the `taxonomy/*.dmp` boot-sync fix sat inert on LT v3 while running
->     medi instances kept failing with `exit 255`, until a manual
->     `update-compute-environment ... updateToLatestImageVersion:true` on the
->     medi CE rolled it. Extend step 5 to force-refresh ALL four CEs (loop over
->     each queue's CE + its LT), not just spot-queue.
->
-> **3. Packer pipeline (delete files + SSM param)**
-> - `infra/packer/build-ami.sh`, `infra/playbook-ami-v2-rebuild.md`.
-> - The SSM param: `aws ssm delete-parameter --name /nf-reads-profiler/ami-id
->   --region us-east-2`.
-> - Deregister the orphaned baked AMI + delete its snapshot once nothing
->   references it (check `aws ec2 describe-images --owners self`).
->
-> **4. FSR (delete scripts + their README step)**
-> - `infra/packer/enable-fsr.sh`, `infra/packer/disable-fsr.sh`. FSR only sped up
->   dehydrating the baked AMI's EBS snapshot on spot launch; thin AMIs carry no
->   DB snapshot, so there's nothing to fast-restore.
-> - In the top-level `README.md` AWS Batch run playbook, remove step 1
->   (`enable-fsr.sh`) and the matching step 5 (`disable-fsr.sh`) — they bracket
->   the `nextflow run`. Make sure to leave the `vmtouch` MEDI-hash steps intact
->   (those are unrelated to FSR).
->
-> **5. Stale prose in THIS readme (all still describe the baked AMI as live):**
-> - "Database placement (worker-local EBS)" → "Custom AMI with pre-baked
->   databases" paragraph above: replace with the S3-sync-at-boot description
->   (already in ADR-001 / `infra/multiqueue-design.md`).
-> - Part 2 deploy: "The skill looks up the custom worker AMI from SSM…".
-> - Pre-run checklist step 3: "DB source bucket … only used by Packer at AMI
->   bake time" — workers now hit it at boot, so this check is no longer a no-op.
-> - "Database paths": "Workers boot with `/mnt/dbs/` already populated by the
->   custom AMI — no runtime S3 sync" — now the opposite.
-> - Troubleshooting "ChocoPhlAn database does not exist": its three causes and
->   the "rebuild the AMI" fix are baked-AMI-era. The failure mode is back to the
->   pre-I14 S3-sync race; rewrite per `infra/multiqueue-design.md` and the
->   per-queue boot-sync blocks in `batch-stack.yaml`.
+The earlier baked-DB custom AMI (Packer-built, `/mnt/dbs/` pre-populated) was
+retired 2026-06 once all four queues moved to thin AMIs; its Packer/FSR pipeline
+and the `EcsAmiId` parameter have been removed.
 
 ---
 
@@ -246,12 +176,11 @@ From a Claude Code session in this repo, invoke:
 /deploy-stack
 ```
 
-The skill looks up the custom worker AMI from SSM
-(`/nf-reads-profiler/ami-id`, populated by `infra/packer/build-ami.sh`),
-validates the template, deploys with the full parameter override block,
-then runs `update-compute-environment` with `updateToLatestImageVersion:
-true` on both CEs — without that step, Batch keeps booting workers from
-the old launch template version even after CFN updates it.
+The skill validates the templates, deploys the compute stack (staged through
+S3 — it's over the 51 KB inline limit) with the full parameter override block,
+then runs `update-compute-environment` with `updateToLatestImageVersion: true`
+on **all four queues' CEs** — without that step, Batch keeps booting workers
+from the old launch template version even after CFN updates it.
 
 > **`RunsBucketName`** must be globally unique across all AWS accounts.
 > If `gutz-nf-reads-profilers-runs` is taken, choose another name and update
@@ -345,10 +274,16 @@ aws s3 ls s3://gutz-nf-reads-profilers-workdir/ --region us-east-2 | head
 aws s3 ls s3://gutz-nf-reads-profilers-runs/samplesheets/ --region us-east-2
 ```
 
-The DB source bucket (`cjb-gutz-s3-demo`) is no longer touched at
-worker runtime — it's only used by Packer at AMI bake time. Verifying
-it from the head node here would just check the head node's IAM, not
-the worker's. Skip.
+The DB source bucket (`cjb-gutz-s3-demo`) IS hit at worker runtime now —
+each per-database queue syncs its DBs from it into `/mnt/dbs/` at boot. A
+failed sync is the usual cause of the "ChocoPhlAn does not exist" failure
+(see Troubleshooting). You can't verify the worker's access from the head
+node (different IAM), but confirm the bucket and the expected DB prefixes
+exist:
+
+```bash
+aws s3 ls s3://cjb-gutz-s3-demo/ --region us-east-2
+```
 
 ### 4. Check IAM runner policy is attached
 
@@ -402,8 +337,8 @@ Key flags:
 
 `nextflow.config` defaults point to local paths (`/home/ubuntu/disk_dbs/...`).
 The `aws` profile overrides these to `/mnt/dbs/...` in `conf/aws_batch.config`.
-Workers boot with `/mnt/dbs/` already populated by the custom AMI — no
-runtime S3 sync. See "Database placement" above.
+Each queue's worker populates `/mnt/dbs/` by syncing its DBs from S3 at boot
+(synchronous, gates ECS registration). See "Database placement" above.
 
 ---
 
@@ -470,35 +405,36 @@ Expected output (names are auto-generated):
 CRITICAL ERROR: The directory provided for the ChocoPhlAn database at /mnt/dbs/chocophlan_v4_alpha/ does not exist.
 ```
 
-**Cause:** the worker booted from an AMI that doesn't have the
-ChocoPhlAn DB baked in — almost always because the launch template is
-still pointing at the wrong AMI ID. Possible reasons:
+**Cause:** the `spot-humann` worker's boot-time S3 sync of the HUMAnN DBs
+into `/mnt/dbs/` did not complete before the job ran. Since the move to thin
+AMIs (each queue syncs its own DBs from `DbSourceBucket` at boot), this is a
+boot-sync failure, not the old baked-AMI mismatch. Possible reasons:
 
-1. The Packer build for the custom worker AMI never landed (stock
-   AL2023 ECS AMI has no DBs).
-2. CFN deployed a new AMI to the LT but the compute environment never
-   refreshed (this is the bug `/deploy-stack` works around with
-   `updateToLatestImageVersion: true`).
-3. The SSM parameter `/nf-reads-profiler/ami-id` was overwritten with
-   a stale or wrong AMI ID.
+1. The launch-template UserData sync failed (S3 perms, missing prefix in
+   `cjb-gutz-s3-demo`, or the CE booting a **stale LT version**). The boot
+   sync is meant to be synchronous and gate ECS registration — if a UserData
+   fix didn't take, the CE may still be on a cached LT version (force-roll it
+   with `/deploy-stack` step 4, which now refreshes all four CEs).
+2. The DB prefix isn't present in `cjb-gutz-s3-demo` (e.g. a renamed/moved
+   DB path that no longer matches the `s3 sync --include` filter).
 
 **Diagnose:**
 
 ```bash
-# What AMI does the LT think it should use?
-aws ec2 describe-launch-template-versions --region us-east-2 \
-  --launch-template-name nf-reads-profiler-worker --versions '$Latest' \
-  --query 'LaunchTemplateVersions[0].LaunchTemplateData.ImageId' --output text
+# What AMI / LT version does the humann CE actually use?
+CE=$(aws batch describe-job-queues --job-queues spot-humann --region us-east-2 \
+  --query "jobQueues[0].computeEnvironmentOrder[0].computeEnvironment" --output text)
+aws batch describe-compute-environments --compute-environments "$CE" --region us-east-2 \
+  --query "computeEnvironments[0].computeResources.launchTemplate"
 
-# What's currently published in SSM?
-aws ssm get-parameter --name /nf-reads-profiler/ami-id \
-  --region us-east-2 --query 'Parameter.Value' --output text
+# Confirm the DBs exist in the source bucket:
+aws s3 ls s3://cjb-gutz-s3-demo/ --region us-east-2
 
 # Inspect a running worker from the head node:
 aws ssm start-session --region us-east-2 --target <instance-id>
 # Then on the worker:
-ls /mnt/dbs/         # should show all 4 DB directories
-cat /mnt/dbs/.ami-build-timestamp
+ls /mnt/dbs/                 # should show all 4 HUMAnN DB directories
+cat /var/log/nf-userdata.log # boot-time s3 sync log — look for sync errors
 
 # How to install btop on a worker node! copy/paste
 sudo dnf install -y make && \
@@ -511,16 +447,12 @@ cd .. && \
 rm -rf btop btop-aarch64-unknown-linux-musl.tar.gz
 ```
 
-**Historical context:** before the I14 custom-AMI migration, this
-error was caused by an ECS-agent-vs-S3-sync race (the agent registered
-with Batch before the boot-time `aws s3 sync` finished, so jobs landed
-on workers with half-empty `/mnt/dbs/`). With baked DBs the race is
-gone; if you see this error today it's an AMI-mismatch problem, not a
-sync timing problem.
-
-**Fix:** rebuild the AMI with `bash infra/packer/build-ami.sh`, then
-redeploy with `/deploy-stack`. The skill picks up the new AMI from SSM
-and forces both CEs to refresh.
+**Fix:** if the CE is on a stale LT version, redeploy with `/deploy-stack`
+(step 4 force-rolls all four CEs to `$Latest`). If the DB prefix is missing
+from `cjb-gutz-s3-demo`, restore it (or fix the `s3 sync --include` filter in
+the queue's UserData in `infra/batch-stack.yaml`) and redeploy. See the
+per-queue boot-sync blocks in `batch-stack.yaml` and
+`infra/multiqueue-design.md`.
 
 ---
 

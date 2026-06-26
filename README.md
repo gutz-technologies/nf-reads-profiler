@@ -18,36 +18,25 @@ development.
 kill a foreground Nextflow process.**
 
 ```bash
-# 1. Enable FSR so spot workers boot fast (bills $2.25/hr — run once before the pipeline)
-FSR_CONFIRM=yes infra/packer/enable-fsr.sh
-# Takes 15–30 min to reach 'enabled'; script polls and exits when ready.
-
-# 2. Lock the MEDI Kraken2 hash into RAM — MEDI kraken runs in Docker on this
+# 1. Lock the MEDI Kraken2 hash into RAM — MEDI kraken runs in Docker on this
 # head node; vmtouch warms the shared OS page cache so the container sees it instantly.
 # -d daemonizes so it holds the lock while Nextflow runs.
 vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
 
-# 3. Start a named screen session and run the pipeline
+# 2. Start a named screen session and run the pipeline
 screen -S nf-aws
 nextflow run main.nf -profile aws \
   --input s3://gutz-nf-reads-profilers-runs/samplesheets/<name>.csv \
   --project <project_name> -resume
 
-# 4. From another terminal: follow Nextflow's own log
+# 3. From another terminal: follow Nextflow's own log
 tail -f .nextflow.log
 grep "status: COMPLETED" .nextflow.log | grep -oP "name: \K\S+" | sort | uniq -c
 
 
-# 5. After the pipeline finishes: release the lock and stop FSR billing
+# 4. After the pipeline finishes: release the MEDI hash lock
 pkill vmtouch
-infra/packer/disable-fsr.sh
 ```
-
-`enable-fsr.sh` resolves the current worker AMI from SSM (`/nf-reads-profiler/ami-id`)
-and enables FSR across all three `us-east-2` AZs. `disable-fsr.sh` is a kill-switch
-that disables all FSR-enabled snapshots in the region — including any stale AMI snapshots
-after a rollover. Minimum billing is 1 hour per enable-cycle regardless of how quickly
-you disable.
 
 To watch a Batch worker live (e.g. tail `/var/log/nf-userdata.log` for the boot-time
 DB copy): `aws ssm start-session --target <instance-id> --region us-east-2` — no SSH
@@ -109,8 +98,6 @@ command returns, so its absence tells you nothing about success vs. failure.
 | `infra/smoke-test.sh` | 2-sample end-to-end smoke test on AWS Batch |
 | `infra/max005_test.sh` | 5-sample scaling baseline (I16); must run under screen |
 | `infra/medi_test.sh` | Full MEDI end-to-end test; must run under screen |
-| `infra/packer/enable-fsr.sh` | Enable EBS Fast Snapshot Restore so spot queue VMs dehydrate faster |
-| `infra/packer/disable-fsr.sh` | Disable FSR after run to stop $0.75/AZ/hr billing |
 
 ## Output
 

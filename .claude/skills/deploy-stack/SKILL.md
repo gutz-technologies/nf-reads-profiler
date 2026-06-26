@@ -12,28 +12,7 @@ This skill deploys the CloudFormation stack and re-validates compute environment
 
 ## Steps
 
-### 1. Look up the current custom AMI ID
-
-The custom AMI is built by `infra/packer/build-ami.sh` and its ID is stored
-in SSM. If SSM is not accessible from the head node, fall back to querying EC2:
-
-```bash
-# Try SSM first
-AMI_ID=$(aws ssm get-parameter --name /nf-reads-profiler/ami-id --region us-east-2 \
-  --query 'Parameter.Value' --output text 2>/dev/null)
-
-# Fallback: latest self-owned AMI
-if [ -z "$AMI_ID" ] || [ "$AMI_ID" = "None" ]; then
-  AMI_ID=$(aws ec2 describe-images --region us-east-2 --owners self \
-    --filters "Name=name,Values=nf-reads-profiler-worker-*" "Name=state,Values=available" \
-    --query 'Images | sort_by(@,&CreationDate) | [-1].ImageId' --output text)
-fi
-echo "AMI: $AMI_ID"
-```
-
-Show the AMI ID to the user for confirmation before proceeding.
-
-### 2. Validate the templates
+### 1. Validate the templates
 
 Use `cfn-lint` (no 51 KB inline limit, stricter than `validate-template`):
 
@@ -41,11 +20,19 @@ Use `cfn-lint` (no 51 KB inline limit, stricter than `validate-template`):
 cfn-lint infra/batch-stack.yaml infra/batch-dashboard.yaml
 ```
 
-If linting fails, stop and report the error. (A `W2001 EcsAmiId not used`
-warning on batch-stack.yaml is expected — the baked-DB AMI is being retired;
-the param is still passed below but no longer referenced.)
+If linting fails, stop and report the error.
 
-### 3. Deploy the compute stack
+### 2. Deploy the compute stack
+
+The template is over the 51 KB inline limit, so `deploy` MUST stage it through
+S3 (`--s3-bucket`/`--s3-prefix`); a bare `deploy` errors with "Templates with a
+size greater than 51,200 bytes must be deployed via an S3 Bucket".
+
+`aws cloudformation deploy` **preserves the stack's previous value for any
+param not listed** in `--parameter-overrides`. So editing a param's `Default:`
+in the template is a no-op on redeploy unless the param is passed here. Every
+non-default param (including all four `MaxvCPUs*`) is therefore pinned
+explicitly below — update the value here when you change a `Default:`.
 
 Budget/alarm/dashboard resources moved to batch-dashboard.yaml (step 4b), so
 `BudgetAlertEmail`/`MonthlyBudgetThreshold` are NOT passed here anymore.
@@ -54,6 +41,8 @@ Budget/alarm/dashboard resources moved to batch-dashboard.yaml (step 4b), so
 aws cloudformation deploy \
   --stack-name nf-reads-profiler-batch \
   --template-file infra/batch-stack.yaml \
+  --s3-bucket gutz-nf-reads-profilers-workdir \
+  --s3-prefix cfn-templates \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-2 \
   --parameter-overrides \
@@ -64,13 +53,15 @@ aws cloudformation deploy \
     SpotBidPercentage=50 \
     MaxvCPUsSpot=256 \
     MaxvCPUsOnDemand=0 \
+    MaxvCPUsMetaphlan=200 \
+    MaxvCPUsHumann=960 \
+    MaxvCPUsMedi=100 \
     ProjectTag=nf-reads-profiler \
     EnvironmentTag=development \
-    DbSourceBucket=cjb-gutz-s3-demo \
-    EcsAmiId=$AMI_ID
+    DbSourceBucket=cjb-gutz-s3-demo
 ```
 
-### 4. Wait for completion
+### 3. Wait for completion
 
 ```bash
 aws cloudformation wait stack-update-complete \
@@ -78,7 +69,7 @@ aws cloudformation wait stack-update-complete \
   --region us-east-2
 ```
 
-### 4b. Deploy the monitoring stack
+### 3b. Deploy the monitoring stack
 
 The observability subsystem (SNS topic, alarms, the EventBridge→Lambda metric
 publishers, the multi-queue dashboard, and the monthly budget) lives in a
@@ -105,31 +96,36 @@ aws cloudformation wait stack-update-complete \
   --region us-east-2
 ```
 
-### 5. Force compute environments to pick up the new launch template
+### 4. Force compute environments to pick up the new launch template
 
 **Important:** A simple disable/re-enable does NOT force Batch to re-snapshot
-the launch template UserData. You must explicitly update the CEs with the
+the launch template UserData. You must explicitly update each CE with its
 launch template reference and `updateToLatestImageVersion`.
 
+**Refresh ALL four queues, not just spot-queue.** Each per-database queue
+(metaphlan/humann/medi) has its own launch template; a UserData change to one of
+those won't take until *its* CE is force-rolled. (This bit us once: a medi
+boot-sync fix sat inert on a cached LT version while jobs kept failing
+`exit 255` until the medi CE was manually refreshed.) The loop below walks every
+queue → its CE(s) and rolls each. `spot-queue` has two CEs (spot + on-demand);
+the per-DB queues have one each.
+
 ```bash
-LT_ID=$(aws ec2 describe-launch-templates --region us-east-2 \
-  --filters "Name=launch-template-name,Values=nf-reads-profiler-worker" \
-  --query 'LaunchTemplates[0].LaunchTemplateId' --output text)
-
-CE_SPOT=$(aws batch describe-job-queues --job-queues spot-queue --region us-east-2 \
-  --query "jobQueues[0].computeEnvironmentOrder[0].computeEnvironment" --output text)
-CE_ONDEMAND=$(aws batch describe-job-queues --job-queues spot-queue --region us-east-2 \
-  --query "jobQueues[0].computeEnvironmentOrder[1].computeEnvironment" --output text)
-
-aws batch update-compute-environment --compute-environment $CE_SPOT --region us-east-2 \
-  --compute-resources "{\"launchTemplate\":{\"launchTemplateId\":\"$LT_ID\",\"version\":\"\$Latest\"},\"updateToLatestImageVersion\":true}"
-aws batch update-compute-environment --compute-environment $CE_ONDEMAND --region us-east-2 \
-  --compute-resources "{\"launchTemplate\":{\"launchTemplateId\":\"$LT_ID\",\"version\":\"\$Latest\"},\"updateToLatestImageVersion\":true}"
+for QUEUE in spot-queue spot-metaphlan spot-humann spot-medi; do
+  for CE in $(aws batch describe-job-queues --job-queues "$QUEUE" --region us-east-2 \
+       --query "jobQueues[0].computeEnvironmentOrder[].computeEnvironment" --output text); do
+    LT_ID=$(aws batch describe-compute-environments --compute-environments "$CE" --region us-east-2 \
+       --query "computeEnvironments[0].computeResources.launchTemplate.launchTemplateId" --output text)
+    echo "Refreshing $QUEUE -> $CE (LT $LT_ID)"
+    aws batch update-compute-environment --compute-environment "$CE" --region us-east-2 \
+      --compute-resources "{\"launchTemplate\":{\"launchTemplateId\":\"$LT_ID\",\"version\":\"\$Latest\"},\"updateToLatestImageVersion\":true}"
+  done
+done
 ```
 
-Wait for both CEs to become VALID before proceeding.
+Wait for all CEs to become VALID before proceeding.
 
-### 6. Confirm both are VALID
+### 5. Confirm all are VALID
 
 ```bash
 aws batch describe-compute-environments \

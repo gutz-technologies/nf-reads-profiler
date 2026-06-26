@@ -93,23 +93,14 @@ Parameters:
     AllowedValues: [production, staging, development]
     Description: Value for Environment tag applied to all resources
 
-  EcsAmiId:
-    Type: AWS::EC2::Image::Id
-    Description: >
-      Custom pre-baked AMI for Batch workers. Built by infra/packer/build-ami.sh
-      from the AL2023 ECS-optimized ARM64 base, with databases (~65 GiB) and
-      Miniconda/awscli pre-installed at /mnt/dbs/ and /opt/conda-aws/.
-      Look up the current AMI with:
-        aws ssm get-parameter --name /nf-reads-profiler/ami-id --region us-east-2 --query 'Parameter.Value' --output text
-
   DbSourceBucket:
     Type: String
     Default: cjb-gutz-s3-demo
     Description: >
       S3 bucket that holds the metaomics databases (MetaPhlAn, HUMAnN4,
-      ChocoPhlAn, UniRef). Databases are pre-baked into the custom AMI;
-      this parameter is used only for IAM policy permissions.
-      The EcsInstanceRole is granted read-only access to this bucket.
+      ChocoPhlAn, UniRef). Workers boot from the thin stock AMI and sync the
+      DBs they need from this bucket at boot — so it is hit at worker runtime,
+      not just IAM. The EcsInstanceRole is granted read-only access to it.
       This bucket is NOT created or deleted by this stack.
 
   ThinEcsAmiId:
@@ -118,9 +109,9 @@ Parameters:
     Description: >
       Stock AL2023 ECS-optimized ARM64 AMI for the per-database queues
       (spot-metaphlan, etc.). Resolved from the AWS public SSM parameter so it is
-      always current — no Packer rebuild. Unlike EcsAmiId this AMI bakes NO
-      databases and NO awscli; the queue's launch-template UserData installs
-      awscli to /opt/conda-aws/bin and copies its database from S3 at boot.
+      always current — no Packer rebuild. This AMI bakes NO databases and NO
+      awscli; the queue's launch-template UserData installs awscli to
+      /opt/conda-aws/bin and copies its database from S3 at boot.
 
   MetaphlanDbS3Uri:
     Type: String
@@ -757,9 +748,8 @@ Resources:
             "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
 
             # 2. Copy the four HUMAnN DBs from S3 (SYNCHRONOUS — gates ECS
-            # registration). Same single `s3 sync` + include-filter form the baked
-            # AMI uses (infra/packer/worker-ami.pkr.hcl), scoped to vOct22 (not
-            # vJan25). chocophlan = ~30k objects, so raise concurrency first
+            # registration). Single `s3 sync` + include-filter, scoped to vOct22
+            # (not vJan25). chocophlan = ~30k objects, so raise concurrency first
             # (object-count/latency bound, not throughput — this is what speeds
             # the small-object tail; the gp3 Throughput bump speeds the bulk files).
             "$AWS" configure set default.s3.max_concurrent_requests 128

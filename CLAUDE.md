@@ -92,11 +92,14 @@ All compute is **Graviton (ARM64)** — runner and workers both. Four job queues
 - `spot-medi` — MEDI subworkflow. Spot-only, single CE, thin AMI. The
   per-database-queue pattern is documented in `infra/multiqueue-design.md`.
 
-All four queues run thin AMIs. The baked-DB custom AMI (`EcsAmiId`) is now
-**fully orphaned**: verified 2026-06-23 that nothing `!Ref`s it (cfn-lint
-W2001) — all four launch templates boot `ThinEcsAmiId` (the stock AL2023 ECS
-ARM64 AMI). The `EcsAmiId` param and its FSR/Packer pipeline are dead weight,
-safe to remove.
+All four queues run thin AMIs (`ThinEcsAmiId`, the stock AL2023 ECS ARM64 AMI
+resolved from the AWS public SSM parameter); each per-database queue syncs its
+DBs from S3 at boot. The baked-DB custom AMI and its whole pipeline were
+**removed 2026-06** — the `EcsAmiId` param, `infra/packer/` (build-ami,
+worker-ami.pkr.hcl, enable/disable-fsr), and `playbook-ami-v2-rebuild.md` are
+all gone. The AWS-side `EcsAmiId` resources (SSM param `/nf-reads-profiler/ami-id`,
+the orphaned AMI, its snapshot) are an irreversible cleanup left for after a
+green run on thin AMIs.
 
 Two S3 buckets:
 

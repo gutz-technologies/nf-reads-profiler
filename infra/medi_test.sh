@@ -86,17 +86,6 @@ ce_count=$(aws batch describe-compute-environments --region "$REGION" \
 [[ "$ce_count" -ge 2 ]] || { echo "ERROR: Only $ce_count CEs ENABLED/VALID." >&2; exit 1; }
 echo "  OK: $ce_count compute environments ENABLED/VALID"
 
-# Warn if FSR not enabled (cold Kraken2 load will take ~30 min instead of ~2 min)
-fsr_enabled=$(aws ec2 describe-fast-snapshot-restores --region "$REGION" \
-    --filters "Name=state,Values=enabled" \
-    --query "length(FastSnapshotRestores)" --output text 2>/dev/null || echo 0)
-if [[ "$fsr_enabled" -eq 0 ]]; then
-    echo "  WARNING: no FSR snapshots in 'enabled' state — first Kraken2 job"
-    echo "           will cold-load the 415 GB hash (~30 min). Run enable-fsr.sh first."
-else
-    echo "  OK: FSR enabled ($fsr_enabled AZ/snapshot pairs)"
-fi
-
 aws s3 ls "s3://${RUNS_BUCKET}/" --region "$REGION" > /dev/null 2>&1 || {
     echo "ERROR: Cannot access s3://${RUNS_BUCKET}/." >&2; exit 1
 }
@@ -250,8 +239,6 @@ cat <<EOF
   S3 results size:    $(fmt_bytes "$RESULTS_BYTES")
   Results (S3):       ${OUTDIR}/${PROJECT}/
   Reports (S3):       ${OUTDIR}/${PROJECT}/reports/   # report.html + trace.txt, timestamped
-
-  Remember: run infra/packer/disable-fsr.sh after this run completes.
 EOF
 
 # ── Summary ───────────────────────────────────────────────────────────────────
