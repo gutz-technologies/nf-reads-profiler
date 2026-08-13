@@ -57,14 +57,30 @@ Parameters:
     Default: 0
     Description: Maximum vCPUs for on-demand fallback (cost safety net)
 
-  MonthlyBudgetThreshold:
+  MaxvCPUsMetaphlan:
     Type: Number
     Default: 200
-    Description: Monthly AWS spend alert threshold in USD (alerts fire at 80% actual and 100% forecasted)
+    Description: >
+      Maximum vCPUs for the spot-metaphlan compute environment (profile_taxa +
+      StrainPhlAn). Spot-only; no on-demand fallback. Capped just above one
+      192-vCPU box so Batch can launch a single 192-vCPU VM (or two 96-vCPU
+      VMs) but not a second 192-vCPU VM (384 > 200). Bumped 100->200
+      2026-06-23 to let the 192-vCPU pools launch.
 
-  BudgetAlertEmail:
-    Type: String
-    Description: Email address for budget and CloudWatch alarm notifications
+  MaxvCPUsHumann:
+    Type: Number
+    Default: 960
+    Description: >
+      Maximum vCPUs for the spot-humann compute environment (profile_function).
+      Spot-only; no on-demand fallback. profile_function is the long-pole of a
+      full run, so this is sized for several bare-metal boxes in parallel: 960
+      vCPU = up to ~5x c8g.metal-48xl (192) or ~10x *.metal-24xl (96), i.e.
+      ~60 concurrent HUMAnN jobs (16 cpus each). Measured ~45 min/job. Sits
+      under a ~1000-core total budget alongside spot-metaphlan (100). Bumped
+      from 600 mid-run on the cosmosid-infant cohort (2026-06-23).
+
+  # MonthlyBudgetThreshold + BudgetAlertEmail moved to infra/batch-dashboard.yaml
+  # (budget, SNS topic, and alarms live there now).
 
   ProjectTag:
     Type: String
@@ -77,24 +93,58 @@ Parameters:
     AllowedValues: [production, staging, development]
     Description: Value for Environment tag applied to all resources
 
-  EcsAmiId:
-    Type: AWS::EC2::Image::Id
-    Description: >
-      Custom pre-baked AMI for Batch workers. Built by infra/packer/build-ami.sh
-      from the AL2023 ECS-optimized ARM64 base, with databases (~65 GiB) and
-      Miniconda/awscli pre-installed at /mnt/dbs/ and /opt/conda-aws/.
-      Look up the current AMI with:
-        aws ssm get-parameter --name /nf-reads-profiler/ami-id --region us-east-2 --query 'Parameter.Value' --output text
-
   DbSourceBucket:
     Type: String
     Default: cjb-gutz-s3-demo
     Description: >
       S3 bucket that holds the metaomics databases (MetaPhlAn, HUMAnN4,
-      ChocoPhlAn, UniRef). Databases are pre-baked into the custom AMI;
-      this parameter is used only for IAM policy permissions.
-      The EcsInstanceRole is granted read-only access to this bucket.
+      ChocoPhlAn, UniRef). Workers boot from the thin stock AMI and sync the
+      DBs they need from this bucket at boot — so it is hit at worker runtime,
+      not just IAM. The EcsInstanceRole is granted read-only access to it.
       This bucket is NOT created or deleted by this stack.
+
+  ThinEcsAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
+    Description: >
+      Stock AL2023 ECS-optimized ARM64 AMI for the per-database queues
+      (spot-metaphlan, etc.). Resolved from the AWS public SSM parameter so it is
+      always current — no Packer rebuild. This AMI bakes NO databases and NO
+      awscli; the queue's launch-template UserData installs awscli to
+      /opt/conda-aws/bin and copies its database from S3 at boot.
+
+  MetaphlanDbS3Uri:
+    Type: String
+    Default: s3://cjb-gutz-s3-demo/metaphlan_databases/vJan25/
+    Description: >
+      S3 prefix of the MetaPhlAn vJan25 database (~44 GB), copied to
+      /mnt/dbs/metaphlan_databases/vJan25/ at boot by the spot-metaphlan worker.
+      Must match direct_metaphlan_db in conf/aws_batch.config.
+
+  MaxvCPUsMedi:
+    Type: Number
+    Default: 100
+    Description: >
+      Maximum vCPUs for the spot-medi compute environment (MEDI_QUANT:*).
+      Spot-only; no on-demand fallback. Capped at 100 so exactly ONE 96-vCPU
+      box (r8gd.metal-24xl / i8g.24xlarge / r8gd.24xlarge) can launch — a second
+      96-vCPU box (192 > 100) or the 192-vCPU 48xl metal pools (192 > 100) won't
+      fit. The dominant cost is boot: each VM warms the 414 GiB Kraken hash into
+      RAM (minutes), while MEDI jobs run 15-40 s each once warm. One box amortises
+      that boot once and its 96 lanes clear the queue fast, so capping at one box
+      beats letting price-capacity-optimized grab two cheap 96s (2x boot tax).
+      The three 192-vCPU 48xl pools in InstanceTypes are now unreachable at this
+      cap (kept only as latent depth if MaxvCPUsMedi is ever raised).
+
+  MediDbS3Uri:
+    Type: String
+    Default: s3://cjb-gutz-s3-demo/referencedata/medi_db/
+    Description: >
+      S3 prefix of the MEDI Kraken2/Bracken DB, staged to /mnt/dbs/medi_db/ at
+      boot by the spot-medi worker. Only runtime files are copied (hash.k2d ~414
+      GiB, opts.k2d, taxo.k2d, *mers.kmer_distrib, food_*); the 224 GiB
+      database.kraken build intermediate is skipped. Must match medi_db_path in
+      conf/aws_batch.config.
 
 # ---------------------------------------------------------------------------
 # S3
@@ -420,7 +470,9 @@ Resources:
           - Sid: PassLambdaRole
             Effect: Allow
             Action: iam:PassRole
-            Resource: !GetAtt BatchMetricsLambdaRole.Arn
+            # Both metrics lambdas live in batch-dashboard.yaml now; match by
+            # name pattern so the runner can (re)deploy that stack.
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${ProjectTag}-*-lambda-role"
             Condition:
               StringEquals:
                 iam:PassedToService: lambda.amazonaws.com
@@ -489,27 +541,25 @@ Resources:
           Value: !Ref EnvironmentTag
 
 # ---------------------------------------------------------------------------
-# Launch Template — pre-baked custom AMI with databases + Miniconda/awscli
+# Launch Template — thin stock AMI, awscli only (spot-queue + on-demand glue)
 # ---------------------------------------------------------------------------
-# The AMI is built by infra/packer/build-ami.sh and contains:
-#   /opt/conda-aws/bin/aws  — Miniconda + awscli (Nextflow's cliPath)
-#   /mnt/dbs/               — all four reference databases (~65 GiB)
-#
-# Nextflow mounts the GRANDPARENT directory of aws.batch.cliPath from the host
-# into each Batch container at the same path. For cliPath '/opt/conda-aws/bin/aws'
-# that means /opt/conda-aws/ is bind-mounted in.
-#
-# UserData is a minimal health check — no S3 sync or software installation.
-# Workers register with ECS immediately at boot.
+# spot-queue carries only DB-free glue jobs (count_reads, clean_reads, combines,
+# multiqc, SRA ingest) — none read /mnt/dbs. So this no longer uses the baked-DB
+# custom AMI (no DBs to stage => no FSR, no Packer rebuild). Stock AL2023 ECS
+# ARM64 AMI (ThinEcsAmiId); UserData only installs awscli v2 to
+# /opt/conda-aws/bin (the GLOBAL aws.batch.cliPath; Nextflow bind-mounts the
+# grandparent /opt/conda-aws into every container, so this path must exist on
+# the host for any job to stage inputs from the S3 workdir).
 
   BatchWorkerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub "${ProjectTag}-worker"
       LaunchTemplateData:
-        ImageId: !Ref EcsAmiId
+        ImageId: !Ref ThinEcsAmiId
         # 500 GB gp3 root volume. AL2023 ECS-optimized defaults to 30 GB, which
         # is exhausted by fasterq-dump scratch + pigz output on medium SRA runs.
+        # No DBs live here anymore (thin AMI); sized purely for SRA ingest scratch.
         # Volume is deleted on instance termination; cost is ~$0.055/hr while
         # a worker is running, $0 once the fleet scales to zero.
         BlockDeviceMappings:
@@ -518,6 +568,68 @@ Resources:
               VolumeSize: 500
               VolumeType: gp3
               Iops: 9000            # 3x default (3000→9000); gp3 max is 16000
+              Throughput: 1000      # gp3 max; default is only 125 MB/s — speeds fasterq-dump scratch writes
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== nf-reads-profiler glue worker boot at $(date) ==="
+
+            # awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            # grandparent /opt/conda-aws must exist for every container). No DB
+            # staging — glue jobs read nothing from /mnt/dbs.
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            echo "=== nf-reads-profiler glue worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, copies vJan25 from S3 at boot (spot-metaphlan)
+# ---------------------------------------------------------------------------
+# Uses the stock AL2023 ECS ARM64 AMI (ThinEcsAmiId) — NO baked databases, NO
+# baked awscli. UserData, run SYNCHRONOUSLY so ECS registration is gated until
+# it finishes (an instance accepts no Batch jobs until vJan25 is present):
+#   1. install awscli v2 to /opt/conda-aws/bin (the GLOBAL aws.batch.cliPath;
+#      Nextflow bind-mounts the grandparent /opt/conda-aws into every container,
+#      so this path must exist on the host for any job to stage inputs).
+#   2. aws s3 cp --recursive the vJan25 DB to /mnt/dbs/metaphlan_databases/vJan25/.
+# One copy per instance (~3–5 min for ~44 GB), amortized over every profile_taxa
+# / StrainPhlAn job that lands on it. No FSR, no Packer rebuild. See
+# infra/multiqueue-design.md.
+
+  MetaphlanWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-metaphlan-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 200          # vJan25 ~44 GB + MetaPhlAn scratch; far less than the 500 GB ingest worker
+              VolumeType: gp3
+              Iops: 9000
+              Throughput: 1000         # gp3 max; default 125 MB/s pins the boot-time vJan25 S3 sync
               DeleteOnTermination: true
               Encrypted: true
         UserData:
@@ -531,42 +643,265 @@ Resources:
             #!/bin/bash
             exec > >(tee -a /var/log/nf-userdata.log) 2>&1
             set -x
-            echo "=== nf-reads-profiler worker boot at $(date) ==="
+            echo "=== spot-metaphlan worker boot at $(date) ==="
 
-            ERRORS=0
-            for d in chocophlan_v4_alpha full_mapping_v4_alpha metaphlan_databases uniref90_annotated_v4_alpha_ec_filtered; do
-              if [ ! -d "/mnt/dbs/$d" ]; then
-                echo "ERROR: /mnt/dbs/$d missing — wrong AMI?" >&2
-                ERRORS=$((ERRORS + 1))
-              fi
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            # 2. Copy vJan25 from S3 (SYNCHRONOUS — gates ECS registration).
+            # Skip the *_SGB.fna / *_SGB.fna.bz2 source sequences (~7.4 GB): they
+            # build the .bt2l index at `metaphlan --install` time and are NOT read
+            # at profiling time (the known-good local install ships neither).
+            # NOTE: if StrainPhlAn Pass-2 extract_markers ever needs _SGB.fna,
+            # drop these --exclude flags.
+            DEST=/mnt/dbs/metaphlan_databases/vJan25
+            mkdir -p "$DEST"
+            # Raise S3 parallelism to match the gp3 Throughput bump (1000 MB/s).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
+            echo "=== Copying ${MetaphlanDbS3Uri} -> $DEST (excluding _SGB.fna*) ==="
+            if ! time "$AWS" s3 cp --recursive --only-show-errors \
+                 --exclude "*_SGB.fna" --exclude "*_SGB.fna.bz2" \
+                 "${MetaphlanDbS3Uri}" "$DEST/"; then
+              echo "FATAL: vJan25 copy failed — worker will not be useful" >&2
+              exit 1
+            fi
+            echo "OK: vJan25 present ($(du -sh "$DEST" | cut -f1))"
+
+            # 3. btop (monitoring; non-essential, don't fail boot on it).
+            echo "=== Installing btop ==="
+            dnf install -y bzip2 >/dev/null 2>&1 || yum install -y bzip2
+            cd /tmp
+            curl -fLO https://github.com/aristocratos/btop/releases/download/v1.4.0/btop-aarch64-linux-musl.tbz && \
+            tar -xf btop-aarch64-linux-musl.tbz && \
+            cp btop/bin/btop /usr/local/bin/ && \
+            btop --version || echo "WARN: btop install failed, continuing"
+
+            echo "=== spot-metaphlan worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, copies HUMAnN DB set from S3 (spot-humann)
+# ---------------------------------------------------------------------------
+# Same thin-AMI + S3-copy pattern as MetaphlanWorkerLaunchTemplate, but stages
+# the four HUMAnN databases (~65 GiB) instead of vJan25. Copy runs SYNCHRONOUSLY
+# so ECS registration is gated until all four prefixes are present:
+#   1. install awscli v2 to /opt/conda-aws/bin (global aws.batch.cliPath).
+#   2. aws s3 sync the four HUMAnN prefixes to /mnt/dbs/ (same dest paths the
+#      baked AMI uses; conf/aws_batch.config reads them from /mnt/dbs/).
+# NOTE: chocophlan_v4_alpha is ~30k small objects. We use `s3 sync` (not `cp`)
+# and bump max_concurrent_requests so the object count (not byte count) doesn't
+# dominate the copy. One copy per instance, amortized over every job on it.
+
+  HumannWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-humann-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 1000         # ~65 GB HUMAnN DBs + retained humann_temp x up to 12 concurrent jobs (c8g.metal-48xl, 16 vCPU/job); 500 ÷ 12 ≈ 42 GB/job still hit "No space left on device", so 1000 (~78 GB/job headroom)
+              VolumeType: gp3
+              Iops: 12000              # higher than metaphlan's 9000 — the 30k-object chocophlan write is IOPS-bound
+              Throughput: 1000         # gp3 max; default 125 MB/s pins the ~65 GiB boot-time HUMAnN DB sync
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== spot-humann worker boot at $(date) ==="
+
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
+            fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
+
+            # 2. Copy the four HUMAnN DBs from S3 (SYNCHRONOUS — gates ECS
+            # registration). Single `s3 sync` + include-filter, scoped to vOct22
+            # (not vJan25). chocophlan = ~30k objects, so raise concurrency first
+            # (object-count/latency bound, not throughput — this is what speeds
+            # the small-object tail; the gp3 Throughput bump speeds the bulk files).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
+            mkdir -p /mnt/dbs
+            echo "=== Syncing HUMAnN DBs from s3://${DbSourceBucket} -> /mnt/dbs ==="
+            if ! time "$AWS" s3 sync "s3://${DbSourceBucket}/" /mnt/dbs/ \
+                 --only-show-errors \
+                 --exclude "*" \
+                 --include "metaphlan_databases/vOct22/*" \
+                 --include "chocophlan_v4_alpha/*" \
+                 --include "uniref90_annotated_v4_alpha_ec_filtered/*" \
+                 --include "full_mapping_v4_alpha/*"; then
+              echo "FATAL: HUMAnN DB sync failed — worker will not be useful" >&2
+              exit 1
+            fi
+            # Fail fast if any prefix landed empty (mirror baked-AMI validation).
+            for d in chocophlan_v4_alpha full_mapping_v4_alpha \
+                     uniref90_annotated_v4_alpha_ec_filtered \
+                     metaphlan_databases/vOct22; do
+              c=$(find "/mnt/dbs/$d" -type f 2>/dev/null | wc -l)
+              echo "  $d: $c files"
+              [ "$c" -gt 0 ] || { echo "FATAL: /mnt/dbs/$d empty" >&2; exit 1; }
             done
+            echo "OK: HUMAnN DBs present ($(du -sh /mnt/dbs | cut -f1))"
 
-            if [ ! -f /opt/conda-aws/bin/aws ]; then
-              echo "ERROR: /opt/conda-aws/bin/aws missing — wrong AMI?" >&2
-              ERRORS=$((ERRORS + 1))
+            # 3. htop + btop (monitoring; non-essential, don't fail boot on them).
+            echo "=== Installing htop + btop ==="
+            dnf install -y htop bzip2 >/dev/null 2>&1 || yum install -y htop bzip2
+            cd /tmp
+            curl -fLO https://github.com/aristocratos/btop/releases/download/v1.4.0/btop-aarch64-linux-musl.tbz && \
+            tar -xf btop-aarch64-linux-musl.tbz && \
+            cp btop/bin/btop /usr/local/bin/ && \
+            btop --version || echo "WARN: btop install failed, continuing"
+
+            echo "=== spot-humann worker boot done at $(date) ==="
+
+            --==BOUNDARY==--
+
+# ---------------------------------------------------------------------------
+# Launch Template — thin stock AMI, stages MEDI Kraken DB to instance-store NVMe
+# and warms the hash into RAM (spot-medi)
+# ---------------------------------------------------------------------------
+# MEDI is the outlier (see infra/multiqueue-design.md): the Kraken2 hash (~414
+# GiB) must be memory-resident for fast classification. So this template differs
+# from the metaphlan/humann ones in two ways:
+#   1. Stages the DB to local instance-store NVMe (not the EBS root) — these are
+#      "d"/i8g families chosen for fast local SSD, RAID0'd across all instance
+#      stores so the 414 GiB hash lands on the fastest disk available.
+#   2. After the S3 copy, warms hash.k2d into the page cache (`cat > /dev/null`,
+#      same trick as conf/test_fulldbs.config) so the first kraken job finds it
+#      in RAM (~100 GB/s) instead of cold-loading. All synchronous, so ECS
+#      registration is gated until the DB is staged AND warm.
+# Runtime files only: hash.k2d / opts.k2d / taxo.k2d (kraken), *mers.kmer_distrib
+# (bracken), food_* (quantify). The 224 GiB database.kraken + *mers.kraken build
+# intermediates are NOT read at classify time, so they are excluded.
+
+  MediWorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectTag}-medi-worker"
+      LaunchTemplateData:
+        ImageId: !Ref ThinEcsAmiId
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100          # OS + medi container image only; the ~414 GiB DB goes to instance-store NVMe, not here
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            exec > >(tee -a /var/log/nf-userdata.log) 2>&1
+            set -x
+            echo "=== spot-medi worker boot at $(date) ==="
+
+            # 1. awscli v2 → /opt/conda-aws/bin/aws (global cliPath; bind-mounted
+            #    grandparent /opt/conda-aws must exist for every container).
+            AWS=/opt/conda-aws/bin/aws
+            if [ ! -x "$AWS" ]; then
+              echo "=== Installing awscli v2 to /opt/conda-aws ==="
+              dnf install -y unzip >/dev/null 2>&1 || yum install -y unzip
+              cd /tmp
+              curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip
+              unzip -q awscliv2.zip
+              ./aws/install --install-dir /opt/conda-aws/aws-cli --bin-dir /opt/conda-aws/bin
+              rm -rf awscliv2.zip aws
             fi
+            "$AWS" --version || { echo "FATAL: awscli install failed" >&2; exit 1; }
 
-            if [ $ERRORS -gt 0 ]; then
-              echo "FATAL: $ERRORS pre-bake checks failed. Rebuild AMI with infra/packer/build-ami.sh" >&2
+            # 2. Mount instance-store NVMe at /mnt/dbs (RAID0 if >1 disk). These
+            # are "Amazon EC2 NVMe Instance Storage" devices, distinct from the
+            # EBS root. The 414 GiB hash needs fast local disk before it is warmed.
+            dnf install -y mdadm e2fsprogs >/dev/null 2>&1 || yum install -y mdadm e2fsprogs
+            DEVS=$(lsblk -dn -o NAME,MODEL | awk '/Instance Storage/ {print "/dev/"$1}')
+            NDEV=$(echo $DEVS | wc -w)
+            echo "Instance-store NVMe devices ($NDEV): $DEVS"
+            [ "$NDEV" -ge 1 ] || { echo "FATAL: no instance-store NVMe found" >&2; exit 1; }
+            if [ "$NDEV" -gt 1 ]; then
+              mdadm --create /dev/md0 --level=0 --force --raid-devices=$NDEV $DEVS
+              DEV=/dev/md0
             else
-              echo "OK: all databases and awscli present"
-              cat /mnt/dbs/.ami-build-timestamp 2>/dev/null || true
-
-              # Phase 1 (issue I20): pre-warm MetaPhlAn vJan25 page cache.
-              # Run in the BACKGROUND so cloud-init returns immediately and
-              # the ECS agent can register with Batch. Without `&`, the cat
-              # blocks UserData for the duration of the snapshot lazy-load
-              # (~95 min observed at 6 MB/s without FSR, see issue I24),
-              # and the worker accepts no jobs the entire time. With `&`,
-              # ingest jobs (FASTERQ_DUMP, etc.) start immediately; only
-              # profile_taxa pays any remaining unwarmed cost on first task.
-              echo "=== Starting MetaPhlAn vJan25 page-cache warmup (background) ==="
-              nohup bash -c 'time cat /mnt/dbs/metaphlan_databases/vJan25/*.bt2l > /dev/null 2>&1' \
-                >> /var/log/nf-userdata.log 2>&1 &
-              echo "Warmup PID: $!"
+              DEV=$DEVS
             fi
+            mkfs.ext4 -F -m 0 "$DEV"
+            mkdir -p /mnt/dbs
+            mount "$DEV" /mnt/dbs
+            df -h /mnt/dbs
 
-            echo "=== nf-reads-profiler worker boot done at $(date) ==="
+            # 3. Stage MEDI runtime DB files from S3 (SYNCHRONOUS — gates ECS
+            # registration). Skip the 224 GiB database.kraken + *mers.kraken
+            # build intermediates (not read at classify time).
+            "$AWS" configure set default.s3.max_concurrent_requests 128
+            "$AWS" configure set default.s3.max_queue_size 10000
+            mkdir -p /mnt/dbs/medi_db
+            echo "=== Syncing MEDI DB from ${MediDbS3Uri} -> /mnt/dbs/medi_db ==="
+            if ! time "$AWS" s3 sync "${MediDbS3Uri}" /mnt/dbs/medi_db/ \
+                 --only-show-errors \
+                 --exclude "*" \
+                 --include "hash.k2d" \
+                 --include "opts.k2d" \
+                 --include "taxo.k2d" \
+                 --include "*mers.kmer_distrib" \
+                 --include "food_matches.csv" \
+                 --include "food_contents.csv.gz" \
+                 --include "taxonomy/nodes.dmp" \
+                 --include "taxonomy/names.dmp" \
+                 --include "taxonomy/merged.dmp" \
+                 --include "taxonomy/delnodes.dmp"; then
+              echo "FATAL: MEDI DB sync failed — worker will not be useful" >&2
+              exit 1
+            fi
+            for f in hash.k2d opts.k2d taxo.k2d food_matches.csv food_contents.csv.gz \
+                     taxonomy/nodes.dmp taxonomy/names.dmp taxonomy/merged.dmp taxonomy/delnodes.dmp; do
+              [ -s "/mnt/dbs/medi_db/$f" ] || { echo "FATAL: /mnt/dbs/medi_db/$f missing/empty" >&2; exit 1; }
+            done
+            echo "OK: MEDI DB staged ($(du -sh /mnt/dbs/medi_db | cut -f1))"
+
+            # 4. Warm the 414 GiB hash into the page cache so the first kraken job
+            # finds it in RAM. Synchronous: registration waits until warm.
+            echo "=== Warming hash.k2d into page cache ==="
+            time cat /mnt/dbs/medi_db/hash.k2d > /dev/null
+            echo "OK: hash warmed"
+
+            echo "=== spot-medi worker boot done at $(date) ==="
 
             --==BOUNDARY==--
 
@@ -578,15 +913,19 @@ Resources:
 # AWS Batch automatically selects the ARM64 ECS-optimized AMI when ARM instance
 # types are specified.
 #
-# Resource fits against aws_batch.config limits (cpus: 8, memory: 64 GB):
-#   r8g.2xlarge  = 8 vCPU / 64 GB  ← HUMAnN (memory-bound), exact fit
-#   r8g.4xlarge  = 16 vCPU / 128 GB ← two HUMAnN jobs in parallel
-#   m8g.2xlarge  = 8 vCPU / 32 GB  ← MetaPhlAn, fastp, SRA download
-#   c8g.2xlarge  = 8 vCPU / 16 GB  ← MetaPhlAn (CPU-bound alignment)
+# spot-queue carries only the DB-free glue jobs (count_reads, clean_reads,
+# combines, multiqc, SRA ingest); profile_taxa and profile_function route to the
+# dedicated metal queues (spot-metaphlan / spot-humann). Glue is light
+# (default cpus: 2 / memory: 4 GB = 2 GB/vCPU), so the memory-optimized r8g
+# family (8 GB/vCPU) was dropped — c8g (2 GB/vCPU, cheapest exact fit) + m8g
+# (4 GB/vCPU, headroom for fastp/fasterq-dump) cover it across 4 pools.
+# TODO: right-size default cpus/memory from the cosmosid-infant trace
+# (outdir/cosmosid-infant/reports/*_trace.txt — peak_rss/cpus columns) before
+# the next big run. Current 2/4 is a first guess, not measured.
 
   # Primary: spot instances. SPOT_CAPACITY_OPTIMIZED selects the pool with the
-  # deepest available capacity, minimizing interruptions for long HUMAnN jobs.
-  # Graviton 4 only — G2/G3 dropped for per-task cost (see I25).
+  # deepest available capacity. Graviton 4 only — G2/G3 dropped for per-task
+  # cost (see I25).
   SpotComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -594,20 +933,17 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: SPOT
-        AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
         BidPercentage: !Ref SpotBidPercentage
         MinvCpus: 0
         MaxvCpus: !Ref MaxvCPUsSpot
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          # Graviton 4 (r8g) — memory-optimized, best price/perf for HUMAnN
-          - r8g.2xlarge    # 8 vCPU / 64 GB
-          - r8g.4xlarge    # 16 vCPU / 128 GB
-          # Graviton 4 (m8g) — general purpose for MetaPhlAn, fastp, downloads
+          # Graviton 4, c8g/m8g only — light glue jobs at 2 GB/vCPU. r8g dropped
+          # (8 GB/vCPU mem-optimized = wasted on glue). 4 pools, 2 families.
           - m8g.2xlarge    # 8 vCPU / 32 GB
           - m8g.4xlarge    # 16 vCPU / 64 GB
-          # Graviton 4 (c8g) — compute-optimized for CPU-bound alignment
           - c8g.2xlarge    # 8 vCPU / 16 GB
           - c8g.4xlarge    # 16 vCPU / 32 GB
         LaunchTemplate:
@@ -624,7 +960,7 @@ Resources:
         Environment: !Ref EnvironmentTag
 
   # Fallback: on-demand Graviton instances — used when spot capacity unavailable.
-  # Capped at MaxvCPUsOnDemand (default 64) as a cost safety net.
+  # Capped at MaxvCPUsOnDemand (default 0 — on-demand fallback disabled) as a cost safety net.
   OnDemandComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -637,14 +973,153 @@ Resources:
         MaxvCpus: !Ref MaxvCPUsOnDemand
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         InstanceTypes:
-          - r8g.2xlarge
-          - r8g.4xlarge
           - m8g.2xlarge
           - m8g.4xlarge
           - c8g.2xlarge
           - c8g.4xlarge
         LaunchTemplate:
           LaunchTemplateId: !Ref BatchWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-metaphlan: dedicated spot CE for profile_taxa + StrainPhlAn. Thin AMI
+  # that copies vJan25 from S3 at boot (see MetaphlanWorkerLaunchTemplate).
+  # Spot-only — no on-demand fallback (these jobs just retry on reclaim).
+  # Metaphlan needs more CPU, strainphlan needs more memory.
+  SpotMetaphlanComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsMetaphlan
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          # All <5% historical interruption and <$0.006/vCPU/hr. With
+          # MaxvCPUsMetaphlan=200 limits CPUs for metaphlan. Strainphlan likes big pools.
+          - c8g.12xlarge      # 48 vCPU / 96 GB — deeper pool, good $/vCPU
+          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — extra spot-pool depth
+          - c8gd.24xlarge     # 96 vCPU / 192 GB + local NVMe — extra spot-pool depth
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — extra spot-pool depth
+          - c8g.48xlarge      # 192 vCPU / 384 GB
+          - c8g.metal-48xl    # 192 vCPU / 384 GB
+          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe
+          - c8gn.48xlarge     # 192 vCPU / 384 GB + local NVMe
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB
+          - r8g.metal-48xl    # 192 vCPU / 1.5 TB
+          # x8g = 16 GB/vCPU — high-mem pools for sample2markers (15 GB/thread).
+          - x8g.8xlarge       # 32 vCPU / 512 GB
+          - x8g.12xlarge      # 48 vCPU / 768 GB
+          - r8g.metal-24xl    # 96 vCPU / 768 GB
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MetaphlanWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-humann: dedicated spot CE for profile_function. Thin AMI that syncs the
+  # HUMAnN DB set (~65 GiB) from S3 at boot (see HumannWorkerLaunchTemplate).
+  # Spot-only — no on-demand fallback (jobs retry on reclaim; maxSpotAttempts=5).
+  # Same three 96-vCPU bare-metal pools as spot-metaphlan for SPOT_CAPACITY_OPTIMIZED
+  # depth; 16 cpus/job packs 6 jobs/VM, all sharing the single staged HUMAnN DB
+  # copy on that instance.
+  SpotHumannComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsHumann
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          # All <5% historical interruption and <$0.006/vCPU/hr. 192-vCPU pools = 12
+          # HUMAnN jobs/VM, 96-vCPU = 6 (16 cpus each). Capacity-optimized picks the
+          # deepest pool; the 24xl pools score 9 in us-east-2 while 48xl scores ~3,
+          # so the 24xls carry the fleet and the 48xls are opportunistic bonus.
+          # Best $/vCPU comes from the largest nodes, so the list is deliberately
+          # weighted to 192-vCPU pools. The mid-size *.16xlarge types were considered
+          # and rejected — poor $/vCPU. c8g.12xlarge (48 vCPU = 3 jobs/VM) is the one
+          # smaller type with competitive $/vCPU, added as a deeper, more-available
+          # pool to fall back on when the metal/48xl pools are capacity-constrained
+          # (observed 2026-06-23: fleet stuck ~480/960 on metal scarcity).
+          - c8g.12xlarge      # 48 vCPU / 96 GB — 3 jobs/VM; deeper pool, okay $/vCPU, bad interrupt rate
+          - c8g.48xlarge      # 192 vCPU / 384 GB — 12 jobs/VM
+          - c8gd.48xlarge     # 192 vCPU / 384 GB + local NVMe — 12 jobs/VM; okay $/vCPU, separate spot pool
+          - c8g.metal-24xl    # 96 vCPU / 192 GB bare metal — 6 jobs/VM
+          - c8g.metal-48xl    # 192 vCPU / 384 GB bare metal — 12 jobs/VM; best $/job
+          - c8gn.48xlarge     # 192 vCPU / 384 GB — 12 jobs/VM
+          - m8g.metal-24xl    # 96 vCPU / 384 GB bare metal — 6 jobs/VM
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB bare metal — 12 jobs/VM
+          - r8g.metal-24xl    # 96 vCPU / 768 GB bare metal — 6 jobs/VM
+          - r8g.metal-48xl    # 192 vCPU / 1.5 TB bare metal — 12 jobs/VM
+        LaunchTemplate:
+          LaunchTemplateId: !Ref HumannWorkerLaunchTemplate
+          Version: $Latest
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref BatchComputeSG
+        Tags:
+          Project: !Ref ProjectTag
+          Environment: !Ref EnvironmentTag
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-medi: dedicated spot CE for MEDI_QUANT:*. Thin AMI that stages the Kraken
+  # DB to instance-store NVMe and warms the 414 GiB hash into RAM at boot (see
+  # MediWorkerLaunchTemplate). Spot-only — no on-demand fallback (jobs retry on
+  # reclaim; maxSpotAttempts=5). InstanceTypes are all NVMe Graviton4 with >=768 GB
+  # RAM (the hash must be memory-resident — 512 GB types are too tight). All six
+  # pools x 3 AZs give a spot placement score of 9 in us-east-2 for one node, even
+  # though no single type scores above 3 alone. Cheapest first; the >$1 metal-48xl
+  # pools are opportunistic depth, picked only when the cheap 24xl pools are dry.
+  SpotMediComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: SPOT
+        AllocationStrategy: SPOT_PRICE_CAPACITY_OPTIMIZED
+        BidPercentage: !Ref SpotBidPercentage
+        MinvCpus: 0
+        MaxvCpus: !Ref MaxvCPUsMedi
+        InstanceRole: !GetAtt EcsInstanceProfile.Arn
+        SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
+        InstanceTypes:
+          - r8gd.metal-24xl   # 96 vCPU / 768 GB + NVMe — cheapest (~$0.71), bare metal
+          - i8g.24xlarge      # 96 vCPU / 768 GB + big NVMe (~$0.82), storage-optimized
+          - r8gd.24xlarge     # 96 vCPU / 768 GB + NVMe (~$1.10)
+          - m8gd.metal-48xl   # 192 vCPU / 768 GB + NVMe (~$1.39) — depth
+          - r8gd.metal-48xl   # 192 vCPU / 1.5 TB + NVMe (~$1.41) — depth
+          - i8g.48xlarge      # 192 vCPU / 1.5 TB + big NVMe (~$1.65) — depth
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MediWorkerLaunchTemplate
           Version: $Latest
         Subnets: !Ref SubnetIds
         SecurityGroupIds:
@@ -677,6 +1152,51 @@ Resources:
         Project: !Ref ProjectTag
         Environment: !Ref EnvironmentTag
 
+  # spot-metaphlan: profile_taxa + StrainPhlAn jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  MetaphlanQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-metaphlan
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotMetaphlanComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-humann: profile_function jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  HumannQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-humann
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotHumannComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
+  # spot-medi: MEDI_QUANT:* jobs (routed via conf/aws_batch.config).
+  # Spot-only — single CE, no on-demand fallback.
+  MediQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: spot-medi
+      State: ENABLED
+      Priority: 100
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref SpotMediComputeEnvironment
+      Tags:
+        Project: !Ref ProjectTag
+        Environment: !Ref EnvironmentTag
+
 # ---------------------------------------------------------------------------
 # CloudWatch Logs
 # ---------------------------------------------------------------------------
@@ -693,410 +1213,6 @@ Resources:
           Value: !Ref EnvironmentTag
 
 # ---------------------------------------------------------------------------
-# SNS — alarm and budget notifications
-# ---------------------------------------------------------------------------
-
-  AlarmTopic:
-    Type: AWS::SNS::Topic
-    Properties:
-      TopicName: !Sub "${ProjectTag}-alerts"
-      Subscription:
-        - Protocol: email
-          Endpoint: !Ref BudgetAlertEmail
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-# ---------------------------------------------------------------------------
-# CloudWatch Alarms
-# ---------------------------------------------------------------------------
-
-  # Fires when 5+ jobs fail within 5 minutes — indicates a systemic issue
-  # (bad container image, IAM permission error, etc.) vs. normal spot interruptions
-  # which are handled transparently by maxRetries=3 in aws_batch.config.
-  FailedJobsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub "${ProjectTag}-batch-failed-jobs"
-      AlarmDescription: "5+ Batch jobs failed in 5 minutes on spot-queue. Likely a systemic issue rather than spot interruptions (those are retried automatically)."
-      Namespace: AWS/Batch
-      MetricName: FailedJobCount
-      Dimensions:
-        - Name: JobQueue
-          Value: !GetAtt SpotQueue.JobQueueArn
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 5
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-    DependsOn: SpotQueue
-
-  # Fires when many jobs are stuck RUNNABLE — indicates spot capacity is
-  # exhausted AND the on-demand fallback CE is also full or hitting the
-  # MaxvCPUsOnDemand cap. Operator action: raise MaxvCPUsOnDemand or
-  # check spot interruption rate. Tracks the RunnableJobCount gauge
-  # emitted by BatchQueueDepthFunction (issue I17).
-  RunnableJobsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub "${ProjectTag}-batch-high-runnable"
-      AlarmDescription: "10+ jobs stuck RUNNABLE on spot-queue for 15+ minutes. Spot capacity exhausted and on-demand vCPU limit reached. Consider raising MaxvCPUsOnDemand."
-      Namespace: AWS/Batch
-      MetricName: RunnableJobCount
-      Dimensions:
-        - Name: JobQueue
-          Value: !GetAtt SpotQueue.JobQueueArn
-      Statistic: Maximum
-      Period: 300
-      EvaluationPeriods: 3
-      Threshold: 10
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-    DependsOn: SpotQueue
-
-# ---------------------------------------------------------------------------
-# Batch Job Metrics — EventBridge → Lambda → CloudWatch
-# Publishes SucceededJobCount, FailedJobCount, etc. to AWS/Batch namespace.
-# AWS Batch does not emit these metrics automatically; this is the back-end
-# that feeds the dashboard below.
-# ---------------------------------------------------------------------------
-
-  BatchMetricsLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${ProjectTag}-batch-metrics-lambda-role"
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PutBatchMetrics
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: cloudwatch:PutMetricData
-                Resource: '*'
-                Condition:
-                  StringEquals:
-                    cloudwatch:namespace: AWS/Batch
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchMetricsFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: NextflowRunnerPolicy
-    Properties:
-      FunctionName: !Sub "${ProjectTag}-batch-metrics"
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt BatchMetricsLambdaRole.Arn
-      Timeout: 10
-      Code:
-        ZipFile: |
-          import boto3
-
-          cw = boto3.client('cloudwatch')
-
-          # Event-driven counters: emit value=1 per state-transition. Sum
-          # aggregation gives a "throughput in window" metric. Only kept
-          # for terminal states; queue-depth gauges (RUNNABLE, RUNNING,
-          # etc.) are emitted by the scheduled BatchQueueDepthFunction
-          # below as actual depths via list-jobs. See issue I17.
-          METRIC_MAP = {
-              'SUCCEEDED': 'SucceededJobCount',
-              'FAILED':    'FailedJobCount',
-          }
-
-          def handler(event, context):
-              detail = event.get('detail', {})
-              status = detail.get('status')
-              job_queue = detail.get('jobQueue')  # full ARN from Batch events
-              metric = METRIC_MAP.get(status)
-              if not metric or not job_queue:
-                  return
-              cw.put_metric_data(
-                  Namespace='AWS/Batch',
-                  MetricData=[{
-                      'MetricName': metric,
-                      'Dimensions': [{'Name': 'JobQueue', 'Value': job_queue}],
-                      'Value': 1,
-                      'Unit': 'Count',
-                  }]
-              )
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchJobStateRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${ProjectTag}-batch-job-state-change"
-      Description: "Capture Batch job state changes and publish counts to CloudWatch AWS/Batch namespace"
-      EventPattern:
-        source:
-          - aws.batch
-        detail-type:
-          - Batch Job State Change
-      State: ENABLED
-      Targets:
-        - Id: BatchMetricsLambda
-          Arn: !GetAtt BatchMetricsFunction.Arn
-
-  BatchMetricsLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt BatchMetricsFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt BatchJobStateRule.Arn
-
-# ---------------------------------------------------------------------------
-# Batch Queue Depth — scheduled poll → CloudWatch (issue I17)
-# Replaces the broken event-driven RunnableJobCount with an actual depth
-# gauge polled every 60s via list-jobs. The previous design emitted
-# value=1 per state-change event, which gave the alarm at most "1" to
-# look at; with this Lambda the alarm sees real queue depth.
-# ---------------------------------------------------------------------------
-
-  BatchQueueDepthLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${ProjectTag}-batch-queue-depth-lambda-role"
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: PollAndPublish
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: batch:ListJobs
-                Resource: '*'
-              - Effect: Allow
-                Action: cloudwatch:PutMetricData
-                Resource: '*'
-                Condition:
-                  StringEquals:
-                    cloudwatch:namespace: AWS/Batch
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchQueueDepthFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub "${ProjectTag}-batch-queue-depth"
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt BatchQueueDepthLambdaRole.Arn
-      Timeout: 30
-      Environment:
-        Variables:
-          QUEUE_NAME: !Ref SpotQueue
-          QUEUE_ARN:  !GetAtt SpotQueue.JobQueueArn
-      Code:
-        ZipFile: |
-          import os
-          import boto3
-
-          batch = boto3.client('batch')
-          cw    = boto3.client('cloudwatch')
-
-          QUEUE_NAME = os.environ['QUEUE_NAME']
-          QUEUE_ARN  = os.environ['QUEUE_ARN']
-
-          # Live queue-depth gauges. Emitted as actual counts (not value=1)
-          # so Maximum/Average aggregation gives the real backlog.
-          STATUSES = {
-              'SUBMITTED': 'SubmittedJobCount',
-              'PENDING':   'PendingJobCount',
-              'RUNNABLE':  'RunnableJobCount',
-              'STARTING':  'StartingJobCount',
-              'RUNNING':   'RunningJobCount',
-          }
-
-          def count_jobs(status):
-              count, token = 0, None
-              while True:
-                  kwargs = {'jobQueue': QUEUE_NAME, 'jobStatus': status, 'maxResults': 100}
-                  if token:
-                      kwargs['nextToken'] = token
-                  resp = batch.list_jobs(**kwargs)
-                  count += len(resp['jobSummaryList'])
-                  token = resp.get('nextToken')
-                  if not token:
-                      break
-              return count
-
-          def handler(event, context):
-              metric_data = [
-                  {
-                      'MetricName': metric,
-                      'Dimensions': [{'Name': 'JobQueue', 'Value': QUEUE_ARN}],
-                      'Value': count_jobs(status),
-                      'Unit': 'Count',
-                  }
-                  for status, metric in STATUSES.items()
-              ]
-              cw.put_metric_data(Namespace='AWS/Batch', MetricData=metric_data)
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectTag
-        - Key: Environment
-          Value: !Ref EnvironmentTag
-
-  BatchQueueDepthScheduleRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub "${ProjectTag}-batch-queue-depth-schedule"
-      Description: "Poll Batch queue depth every 60s and publish to CloudWatch."
-      ScheduleExpression: rate(1 minute)
-      State: ENABLED
-      Targets:
-        - Id: BatchQueueDepthLambda
-          Arn: !GetAtt BatchQueueDepthFunction.Arn
-
-  BatchQueueDepthLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !GetAtt BatchQueueDepthFunction.Arn
-      Action: lambda:InvokeFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt BatchQueueDepthScheduleRule.Arn
-
-# ---------------------------------------------------------------------------
-# CloudWatch Dashboard
-# ---------------------------------------------------------------------------
-
-  BatchDashboard:
-    Type: AWS::CloudWatch::Dashboard
-    Properties:
-      DashboardName: !Sub "${ProjectTag}-batch"
-      DashboardBody: !Sub |
-        {
-          "widgets": [
-            {
-              "type": "metric",
-              "x": 0, "y": 0, "width": 12, "height": 6,
-              "properties": {
-                "title": "Job Status — spot-queue",
-                "metrics": [
-                  ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
-                  ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                  ["AWS/Batch", "PendingJobCount",   "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                  ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                  ["AWS/Batch", "StartingJobCount",  "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                  ["AWS/Batch", "RunningJobCount",   "JobQueue", "${SpotQueue.JobQueueArn}", {"color": "#17becf", "label": "Running"}]
-                ],
-                "period": 300,
-                "stat": "Sum",
-                "view": "timeSeries",
-                "region": "${AWS::Region}"
-              }
-            },
-            {
-              "type": "alarm",
-              "x": 0, "y": 6, "width": 6, "height": 3,
-              "properties": {
-                "title": "Active Alarms",
-                "alarms": [
-                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-failed-jobs",
-                  "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ProjectTag}-batch-high-runnable"
-                ]
-              }
-            },
-            {
-              "type": "metric",
-              "x": 6, "y": 6, "width": 18, "height": 6,
-              "properties": {
-                "title": "Job Failure Rate (Failed / Submitted)",
-                "metrics": [
-                  ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueue.JobQueueArn}"],
-                  ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueue.JobQueueArn}"]
-                ],
-                "period": 3600,
-                "stat": "Sum",
-                "view": "timeSeries",
-                "region": "${AWS::Region}"
-              }
-            }
-          ]
-        }
-    DependsOn:
-      - FailedJobsAlarm
-      - RunnableJobsAlarm
-
-# ---------------------------------------------------------------------------
-# AWS Budget
-# ---------------------------------------------------------------------------
-
-  BatchMonthlyBudget:
-    Type: AWS::Budgets::Budget
-    Properties:
-      Budget:
-        BudgetName: !Sub "${ProjectTag}-monthly"
-        BudgetType: COST
-        TimeUnit: MONTHLY
-        BudgetLimit:
-          Amount: !Ref MonthlyBudgetThreshold
-          Unit: USD
-        CostFilters:
-          TagKeyValue:
-            - !Sub "user:Project$${ProjectTag}"
-        CostTypes:
-          IncludeTax: true
-          IncludeSubscription: true
-          UseBlended: false
-      NotificationsWithSubscribers:
-        - Notification:
-            NotificationType: ACTUAL
-            ComparisonOperator: GREATER_THAN
-            Threshold: 80
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref BudgetAlertEmail
-        - Notification:
-            NotificationType: FORECASTED
-            ComparisonOperator: GREATER_THAN
-            Threshold: 100
-            ThresholdType: PERCENTAGE
-          Subscribers:
-            - SubscriptionType: EMAIL
-              Address: !Ref BudgetAlertEmail
-
-# ---------------------------------------------------------------------------
 # Outputs
 # ---------------------------------------------------------------------------
 
@@ -1106,6 +1222,24 @@ Outputs:
     Value: !GetAtt SpotQueue.JobQueueArn
     Export:
       Name: !Sub "${AWS::StackName}-SpotQueueArn"
+
+  MetaphlanQueueArn:
+    Description: ARN of the spot-metaphlan job queue (profile_taxa + StrainPhlAn)
+    Value: !GetAtt MetaphlanQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-MetaphlanQueueArn"
+
+  HumannQueueArn:
+    Description: ARN of the spot-humann job queue (profile_function)
+    Value: !GetAtt HumannQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-HumannQueueArn"
+
+  MediQueueArn:
+    Description: ARN of the spot-medi job queue (MEDI_QUANT:*)
+    Value: !GetAtt MediQueue.JobQueueArn
+    Export:
+      Name: !Sub "${AWS::StackName}-MediQueueArn"
 
   BatchJobRoleArn:
     Description: >
@@ -1129,9 +1263,8 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-WorkDirBucket"
 
-  DashboardUrl:
-    Description: CloudWatch dashboard for monitoring Batch jobs and vCPU utilization
-    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ProjectTag}-batch"
+  # DashboardUrl moved to infra/batch-dashboard.yaml (split out at the 51 KB
+  # inline-template limit). The dashboard name is unchanged (${ProjectTag}-batch).
 
   BatchConsoleUrl:
     Description: AWS Batch console — view job queues, compute environments, and running jobs

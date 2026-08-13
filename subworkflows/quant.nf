@@ -11,10 +11,6 @@ workflow MEDI_QUANT {
                              // samples, re-injected into the merge so the reduce stays complete
 
     main:
-        channel
-            .fromList(["D", "G", "S"])
-            .set{levels}
-
         // Flatten studies back to individual samples for processing
         reads = studies_with_samples.flatMap{_study_id, samples ->
             samples.collect{meta, reads -> [meta, reads]}
@@ -38,15 +34,18 @@ workflow MEDI_QUANT {
 
         kraken_report(architeuthis_filter.out)
 
-        count_taxa(kraken_report.out.combine(levels))
+        count_taxa(kraken_report.out)
 
-        // Group by study and taxonomic level for merging (multiple studies possible).
-        // Mix in skipped samples' re-injected .b2 files so the merge includes every
-        // sample in the study, not just the ones freshly run this invocation.
+        // count_taxa now does all three levels (D/G/S) per sample in ONE job.
+        // Re-derive the level from each .b2's parent dir and drop 0-byte files
+        // (a level with no classified reads writes an empty .b2 instead of
+        // exit-1), then group by study+level for merging (multiple studies
+        // possible). Mix in skipped samples' re-injected .b2 files so the merge
+        // includes every sample in the study, not just those freshly run.
         count_taxa.out
-            .map{meta, lev, file ->
-                def group_key = [study: meta.run, level: lev]
-                [group_key, file]
+            .flatMap{ meta, files ->
+                [files].flatten().findAll{ it.size() > 0 }
+                    .collect{ f -> [[study: meta.run, level: f.parent.name], f] }
             }
             .mix(skipped_counts)
             .groupTuple()
@@ -148,11 +147,15 @@ process architeuthis_filter {
     script:
     name = task.ext.name ?: "${meta.id}"
     """
+    # architeuthis exits 1 when there are no mappings to filter. Emit an empty
+    # _filtered.k2 instead so the sample flows on (kraken_report → count_taxa)
+    # tracked-but-empty rather than being dropped from MEDI by errorStrategy.
     architeuthis mapping filter ${k2} \
         --data-dir ${params.medi_db_path}/taxonomy \
         --min-consistency ${params.consistency ?: 0.95} --max-entropy ${params.entropy ?: 0.1} \
         --max-multiplicity ${params.multiplicity ?: 4} \
-        --out ${name}_filtered.k2
+        --out ${name}_filtered.k2 \
+        || : > ${name}_filtered.k2
     """
 }
 
@@ -216,25 +219,36 @@ process merge_mappings {
 }
 
 process count_taxa {
-    tag "${name}_${lev}"
+    tag "${name}"
     label 'low'
     container params.docker_container_medi
     publishDir {"${params.outdir}/${params.project}/${meta.run}/medi/bracken"}, mode: 'copy', overwrite: true
 
     input:
-    tuple val(meta), path(report), val(lev)
+    tuple val(meta), path(report)
 
     output:
-    tuple val(meta), val(lev), path("${lev}/${lev}_${name}.b2")
+    tuple val(meta), path("{D,G,S}/*.b2")
 
     script:
     name = task.ext.name ?: "${meta.id}"
     """
-    mkdir ${lev} && \
-        fixk2report.R ${report} ${lev}/${report} && \
-        bracken -d ${params.medi_db_path} -i ${lev}/${report} \
-        -l ${lev} -o ${lev}/${lev}_${name}.b2 -r ${params.read_length ?: 150} \
-        -t ${params.threshold ?: 10} -w ${lev}/${name}_bracken.tsv
+    # fixk2report is level-independent, so fix the report once and reuse it.
+    # A sample with nothing classified yields a 0-byte kraken report, which
+    # fixk2report (fread) errors on — fall back to an empty fixed report so the
+    # bracken empty-guard below emits empty .b2s instead of failing the job.
+    fixk2report.R ${report} fixed_report.txt || : > fixed_report.txt
+    for lev in D G S; do
+        mkdir -p \$lev
+        # bracken exits 1 when a level has no classified reads. Emit a 0-byte
+        # .b2 instead so one empty level can't fail the whole sample, and every
+        # sample yields a uniform D/G/S set. Empties are filtered out before the
+        # per-level merge in MEDI_QUANT.
+        bracken -d ${params.medi_db_path} -i fixed_report.txt \
+            -l \$lev -o \$lev/\${lev}_${name}.b2 -r ${params.read_length ?: 150} \
+            -t ${params.threshold ?: 10} -w \$lev/${name}_bracken.tsv \
+            || : > \$lev/\${lev}_${name}.b2
+    done
     """
 }
 

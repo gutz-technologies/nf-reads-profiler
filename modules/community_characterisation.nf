@@ -15,8 +15,10 @@ process profile_taxa {
   tag "$name"
 
   // CPUs: request N from the scheduler, run with 2N internally (--nproc task.cpus * 2).
-  // Bowtie2 alignment is partially single-threaded; overprovisioning lets it burst
-  // onto idle cores without reserving them from the queue.
+  // Bowtie2 alignment is partially single-threaded; overprovisioning lets each job
+  // burst onto cores idle at that moment. On spot-metaphlan, 6 jobs (16 cpus each)
+  // share one r8g.metal-24xl (96 vCPU), so the 2x burst draws from the same shared
+  // pool rather than a per-job-dedicated VM — still safe since all 6 rarely peak at once.
   container params.docker_container_metaphlan
 
   publishDir {"${params.outdir}/${params.project}/${run}/taxa"}, mode: 'copy', pattern: "*.{biom,tsv,txt}"
@@ -92,7 +94,7 @@ process profile_function {
   tuple val(meta), path("${name}_humann_temp/${name}_bowtie2_unaligned.fa"), emit: unmapped_reads, optional: true
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   name = task.ext.name ?: "${meta.id}"
@@ -111,8 +113,12 @@ process profile_function {
     --metaphlan-options "-t rel_ab_w_read_stats --index ${params.humann_metaphlan_id} --bowtie2db ${params.humann_metaphlan_db} --bt2_ps ${params.humann_bt2options}" \\
     --pathways metacyc \\
     --threads ${task.cpus * 2} \\
-    --memory-use minimum \\
-    ${params.enable_medi ? '' : '--remove-temp-output'}
+    --memory-use minimum
+  # HUMAnN temp output kept on purpose (no --remove-temp-output): humann_temp's
+  # bowtie2_unaligned.fa is MEDI's Kraken2 input. profile_function is now
+  # independent of enable_medi, so MEDI can be turned on later via -resume with
+  # NO HUMAnN rerun. Disk savings aren't worth the MEDI-integration edge case,
+  # and these nodes are IO-bound, not disk-bound.
 
   # MultiQC doesn't have a module for humann yet. As a consequence, I
   # had to create a YAML file with all the info I need via a bash script
@@ -141,7 +147,7 @@ process combine_humann_tables {
   tuple val(meta), path('*_combined.tsv')
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
 
@@ -267,7 +273,7 @@ process convert_tables_to_biom {
   tuple val(meta), path("*.biom"), emit: biom_files
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -334,7 +340,7 @@ process split_stratified_tables {
   tuple val(meta), path("*_unstratified.tsv"), emit: unstratified_tables
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -369,7 +375,7 @@ process regroup_genefamilies {
   tuple val(meta), path("*.biom"), emit: regrouped_bioms
 
   when:
-  !params.skipHumann && params.humann_regroup && meta.type == 'genefamilies'
+  params.enable_humann && params.humann_regroup && meta.type == 'genefamilies'
 
   script:
   run = task.ext.run ?: "${meta.run}"

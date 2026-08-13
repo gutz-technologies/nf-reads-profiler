@@ -1,91 +1,13 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
 
-## Overview
+User- and operator-facing docs — running the pipeline, profiles, output layout,
+databases, infra scripts — live in `README.md` and are imported below. This file
+adds only the agent/code-internal guidance on top.
 
-Nextflow pipeline (DSL2) for metagenomic read profiling. Originally forked from
-[YAMP](https://github.com/alesssia/YAMP); now targeted at AWS Batch (primary) and
-Azure Batch, with local Docker for dev. Core tools: MetaPhlAn4, HUMAnN4, fastp,
-MultiQC. Optional MEDI subworkflow (Kraken2/Bracken/Architeuthis) for food
-microbiome quantification.
-
-## Running the pipeline
-
-**Always use screen for any run that takes more than a few minutes.** Closing the
-terminal (or the Claude Code client) kills the Nextflow process — screen keeps it
-alive across SSH disconnects and client exits.
-
-```bash
-# ── Screen basics ──────────────────────────────────────────────────────────
-screen -S nf-run          # start a named session
-# Detach: Ctrl+A D   |   Reattach: screen -r nf-run   |   List: screen -ls
-
-# ── Local — basic (Docker, small test data) ────────────────────────────────
-nextflow run main.nf -profile test
-
-# ── Local — with MEDI (I13); screen keeps it alive ─────────────────────────
-screen -S nf-test
-# Lock the Kraken2 hash into RAM before the first job (cold ~30 min; warm <1 min/sample).
-# -d daemonizes so it holds the lock in the background while Nextflow runs.
-vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
-nextflow run main.nf -profile test_medi -resume
-# Monitor from another terminal:
-tail -f .nextflow.log
-
-# ── AWS Batch — primary production path ────────────────────────────────────
-# 1. Enable FSR so spot workers boot fast (bills $2.25/hr; run once before pipeline)
-FSR_CONFIRM=yes infra/packer/enable-fsr.sh
-# Polls until all 3 us-east-2 AZs reach 'enabled' (~15–30 min for a 150 GB snapshot)
-
-# 2. Lock the MEDI Kraken2 hash into RAM (cold ~30 min; warm <1 min/sample).
-# MEDI kraken runs in Docker on this head node — vmtouch on the host warms the
-# shared OS page cache so the container sees it instantly.
-# -d daemonizes so it holds the lock in the background while Nextflow runs.
-vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
-
-# 3. Launch inside screen so SSH disconnect / Claude Code exit won't kill it:
-screen -S nf-aws
-nextflow run main.nf -profile aws \
-  --input s3://gutz-nf-reads-profilers-runs/samplesheets/<name>.csv \
-  --project <project_name> -resume
-# Detach: Ctrl+A D  |  Reattach: screen -r nf-aws
-
-# 4. From another terminal, tail Nextflow's own log:
-tail -f .nextflow.log
-grep "status: COMPLETED" .nextflow.log | grep -oP "name: \K\S+" | sort | uniq -c
-
-# 5. After all runs are done for the day, release the lock and stop FSR billing:
-pkill vmtouch
-infra/packer/disable-fsr.sh
-# Kill-switch: disables ALL FSR-enabled snapshots in us-east-2 (catches stale AMI rollovers too)
-```
-
-### Detecting when a run has ended
-
-A finished run leaves no `nextflow run` process and no Docker containers, but
-those alone are racy. Reliable signals, in order of preference:
-
-- **`.nextflow.log`** — the definitive end marker is the final line
-  `Execution complete -- Goodbye` (preceded by `Session await > all barriers
-  passed`). Grep it: `grep -c 'Execution complete -- Goodbye' .nextflow.log`.
-  This is written for both success and failure.
-- **Console/tee output** — the pipeline prints `[SUCCESS] completed=N failed=M
-  cached=K` (or a failure summary) as its last lines. Good for at-a-glance
-  status, but only present if you teed stdout (e.g. `... | tee /tmp/run.out`).
-- **`nextflow log` / `.nextflow/history`** — the run's status column flips to
-  `OK`/`ERR` once it ends; `-` means still running or killed. Lags slightly
-  behind the log's Goodbye line.
-
-Don't rely on the `screen` session disappearing — if you launched with
-`screen -dmS name bash -c "... | tee ..."`, the session ends the instant the
-command returns, so its absence tells you nothing about success vs. failure.
-
-Profile-to-config mapping is in `nextflow.config`:
-- `aws` → `conf/aws_batch.config` (s3 workDir, `awsbatch` executor, Graviton spot queue)
-- `azure` → `conf/azurebatch.config`
-- `test` → `conf/test.config` (local Docker, tiny `nreads`/`minreads`)
-- `test_medi` → `conf/test_medi.config` (extends `test`; enables MEDI, sets ssddbs paths, disables cleanup)
+@README.md
 
 ## Samplesheet schema
 
@@ -134,7 +56,7 @@ TSVs already exist in `outdir/project/run/function/` — used to skip samples on
 resume-style reruns.
 
 The HUMAnN biom-conversion branch (`split_stratified_tables` →
-`convert_tables_to_biom`) is **active** for every non-`skipHumann` run (enabled
+`convert_tables_to_biom`) is **active** for every `enable_humann` run (enabled
 in `57da5a3`, 2026-05-12, which removed the old `params.annotation` gate). It
 runs after `combine_humann_tables`: splits each combined TSV into
 stratified/unstratified, then converts every (type × stratification) to `.biom`
@@ -142,36 +64,44 @@ under `outdir/<project>/<run>/combined_tables/` and the per-type
 `outdir/<project>/combined_bioms/`. `regroup_genefamilies` is a further branch
 gated on `params.humann_regroup` (off by default).
 
-## Databases
-
-All profiles expect pre-staged databases; nothing is downloaded at runtime.
-
-| Param | Purpose |
-|-------|---------|
-| `direct_metaphlan_id` / `direct_metaphlan_db` | Standalone MetaPhlAn (newer DB, e.g. `mpa_vJan25_CHOCOPhlAnSGB_202503`) |
-| `humann_metaphlan_index` / `humann_metaphlan_db` | MetaPhlAn DB matched to HUMAnN4 (e.g. `mpa_vOct22_CHOCOPhlAnSGB_202403`) |
-| `humann_chocophlan` / `humann_uniref` / `humann_utilitymap` | HUMAnN4 nucleotide/protein/mapping DBs |
-| `medi_db_path` / `medi_food_matches` / `medi_food_contents` | MEDI Kraken2+Bracken DB and food metadata |
-
-Paths differ per profile:
-- Local / `test_medi`: `/mnt/scratch/ssddbs/...` — synced from
-  `s3://cjb-gutz-s3-demo` to the instance-store RAID at `/mnt/scratch/ssddbs/`
-  (see `~/colin_notes_vm.md` sections 4–5). `docker.runOptions` in
-  `nextflow.config` bind-mounts this into Docker. vJan25 was installed via
-  `metaphlan --install` and is now in both ssddbs and S3.
-- AWS: `/mnt/dbs/...` — pre-baked custom AMI (Packer, see `issues/I14-custom-ami-worker.md`).
-  vJan25 baked in via `metaphlan --install` during AMI build (I21); vOct22
-  synced from S3. Workers boot ready in seconds with no runtime sync.
-
-`README.md` has the `docker run ... humann_databases --download` commands for
-rebuilding HUMAnN4/MetaPhlAn DBs when versions bump.
-
 ## AWS Batch infra
 
-Managed by a single CloudFormation template: `infra/batch-stack.yaml`. Stack
-name `nf-reads-profiler-batch`, region `us-east-2`, account `730883236839`.
-All compute is **Graviton (ARM64)** — runner and workers both. Two CEs behind
-`spot-queue`: spot (primary) + on-demand (fallback). Two S3 buckets:
+Managed by two CloudFormation templates: `infra/batch-stack.yaml` (compute —
+stack `nf-reads-profiler-batch`) and `infra/batch-dashboard.yaml`
+(observability: SNS topic, alarms, EventBridge→Lambda metric publishers,
+dashboard, budget — stack `nf-reads-profiler-monitoring`, split out at the
+51 KB inline-template limit; imports the compute stack's queue-ARN exports, so
+deploy compute first). Lint both with `cfn-lint infra/*.yaml` (no size limit,
+unlike `validate-template`); `/deploy-stack` deploys both in order. Region
+`us-east-2`, account `730883236839`.
+All compute is **Graviton (ARM64)** — runner and workers both. Four job queues
+(`spot-queue`, `spot-metaphlan`, `spot-humann`, `spot-medi`):
+
+- `spot-queue` — default for all DB-free glue jobs (count/clean/combine/multiqc/
+  SRA ingest). Two CEs: spot (primary) + on-demand (fallback). Now uses the thin
+  stock AMI (awscli only, no DBs, no FSR) since no DB-bound jobs route here.
+- `spot-metaphlan` — `profile_taxa` + `STRAINPHLAN:*` only (routed via
+  `withName ... queue =` in `conf/aws_batch.config`). Spot-only, single CE,
+  thin stock AMI that copies vJan25 from S3 at boot (~3–5 min/instance, no FSR,
+  no Packer rebuild). `MaxvCPUsMetaphlan=200` (bumped from 100, 2026-06-23) — a
+  single 192-vCPU VM (or two 96-vCPU VMs) can launch, but not a second 192-vCPU
+  box (384 > 200), so the 192-vCPU pools in its `InstanceTypes` are now live.
+- `spot-humann` — `profile_function` only. Spot-only, single CE, thin AMI that
+  syncs the HUMAnN DB set (~65 GiB) from S3 at boot. `MaxvCPUsHumann=960`
+  (~60 concurrent jobs).
+- `spot-medi` — MEDI subworkflow. Spot-only, single CE, thin AMI. The
+  per-database-queue pattern is documented in `infra/multiqueue-design.md`.
+
+All four queues run thin AMIs (`ThinEcsAmiId`, the stock AL2023 ECS ARM64 AMI
+resolved from the AWS public SSM parameter); each per-database queue syncs its
+DBs from S3 at boot. The baked-DB custom AMI and its whole pipeline were
+**removed 2026-06** — the `EcsAmiId` param, `infra/packer/` (build-ami,
+worker-ami.pkr.hcl, enable/disable-fsr), and `playbook-ami-v2-rebuild.md` are
+all gone. The AWS-side `EcsAmiId` resources (SSM param `/nf-reads-profiler/ami-id`,
+the orphaned AMI, its snapshot) are an irreversible cleanup left for after a
+green run on thin AMIs.
+
+Two S3 buckets:
 
 - `gutz-nf-reads-profilers-workdir` — Nextflow workDir, 30-day lifecycle, stack-managed.
 - `gutz-nf-reads-profilers-runs` — samplesheets and results, `DeletionPolicy: Retain`.
@@ -184,11 +114,65 @@ references `nf-reads-profiler-batch-job-role` as `aws.batch.jobRole`.
 Resource caps live in `conf/aws_batch.config` via `process.resourceLimits` —
 retries won't blow past these (prevents runaway memory on retry storms).
 
+### Deploying compute-resource changes REPLACES the CE (kills running jobs)
+
+The CEs in `batch-stack.yaml` do not set `ReplaceComputeEnvironment`, so it
+defaults to **`true`**: any change to a CE's *compute resources* (most commonly
+`InstanceTypes`, but also subnets/SGs/allocation strategy) makes CloudFormation
+**replace the entire CE** — create a new physical resource, then delete the old
+one, terminating every instance on it and killing in-flight jobs. Verified
+2026-06-23 via stack events: a deploy that only edited `SpotMetaphlan`'s
+`InstanceTypes` emitted "Requested update requires the creation of a new
+physical resource; hence creating one" and drained the CE. **Exception:** a
+pure `maxVcpus` change updates *in place* (no replacement) — that's why the
+`MaxvCPUsHumann` 600→960 bump didn't disturb running humann jobs, but the
+later InstanceTypes edit did.
+
+Rules of thumb:
+- **Never deploy an `InstanceTypes` (or other compute-resource) change while a
+  run is live** on the affected queue — it will kill the running jobs. Stage the
+  YAML edit and deploy after the run, or accept the job loss (jobs retry under
+  `maxSpotAttempts`/Nextflow, but it's a real interruption).
+- YAML **comment-only** edits never trigger this — CloudFormation discards
+  comments; replacement is always property-level.
+- Observed but unconfirmed: in the 2026-06-23 deploy the *unchanged* humann CE
+  was replaced alongside metaphlan. Leading hypothesis is the launch-template
+  `Version: $Latest` ref making CFN re-evaluate/replace all CEs on any compute
+  update (changeset auto-deleted, so not provable from artifacts). Treat "deploy
+  any compute-resource change" as potentially churning **all** CEs until ruled
+  out.
+- To make such edits non-destructive, set `ReplaceComputeEnvironment: false`
+  plus an `UpdatePolicy` (`TerminateJobsOnUpdate: false`, a
+  `JobExecutionTimeoutMinutes`) so Batch updates in place and drains running
+  jobs instead of terminating them. Not yet applied to this stack.
+
+### `project` and execution-report paths (config gotcha)
+
+`params.project` defaults to `"none"`; `main.nf` now fails fast if it's left
+unset (so outputs don't silently land under `<outdir>/none/`). Always set a real
+project.
+
+The `timeline`/`report`/`dag`/`trace` file paths embed `${params.outdir}` and
+`${params.project}`. Nextflow interpolates these GStrings **at config parse
+time**, not at runtime, so they freeze to whatever `project`/`outdir` are when
+the block is parsed. Consequences:
+
+- A `project` passed on the **CLI** (`--project`) binds before any config parses,
+  so it reaches the report paths — this is why playbook CLI runs land correctly.
+- A `project` set in a **`-c` run config's `params{}` block** is merged *after*
+  `nextflow.config`'s report blocks parse, so those blocks freeze to `none`.
+  `conf/aws_batch.config` re-declares the report blocks (after its own S3
+  `outdir`) to override that — but for `project` to resolve there, the run config
+  **must set `params { project = ... }` BEFORE `includeConfig
+  conf/aws_batch.config`**. Include-then-params freezes to `none` (verified with
+  `nextflow config`). Outputs (publishDir, `main.nf`) read `params.project` at
+  runtime and are always correct; only the four report files are affected.
+
 ## Key parameters
 
 Defined in `nextflow.config`:
 
-- `skipHumann` (default false) — skip functional profiling and all HUMAnN combine/split steps.
+- `enable_humann` (default true) — run functional profiling and all HUMAnN combine/split steps.
 - `singleEnd`, `mergeReads`, `nreads` (32,000,000 cap), `minreads` (100,000 floor; samples below this are logged and dropped, not failed).
 - `process_humann_tables`, `humann_regroups` (e.g. `"uniref90_ko,uniref90_rxn"`), `split_size` — used by the currently-disabled regroup branch.
 - `humann_params` — passthrough (test profile sets `--bypass-translated-search`).
@@ -201,41 +185,6 @@ Defined in `nextflow.config`:
 Error strategy is profile-dependent. Azure uses `errorStrategy = 'ignore'`
 with retries on labelled processes; AWS defaults to `maxRetries = 0` plus
 `resourceLimits`. Failed samples are logged and skipped, not fatal.
-
-## Output layout
-
-Three tiers: per-sample → per-study combines → project-wide biom rollup. Verified
-against a real 2890-sample run (`diversigen-infant`).
-
-```
-outdir/<project>/<run>/
-  ├── readcount/         # <id>_readcount.txt per sample
-  ├── taxa/              # <id>_metaphlan.biom (MetaPhlAn4) per sample
-  ├── function/          # HUMAnN4 per sample: _1_metaphlan_profile, _2_genefamilies,
-  │                      #   _3_reactions, _4_pathabundance (.tsv) + _0.log; skipped if --skipHumann
-  ├── combined_tables/   # per-study combines, TSV only: <run>_<type>_combined.tsv
-  │                      #   (type = reactions | pathabundance | humann_taxonomy). All biom live in
-  │                      #   combined_bioms/ (no per-run copy). genefamilies_combined.tsv NOT published (~24 GB).
-  ├── medi/              # only if --enable_medi: bracken/<lev>/<lev>_<id>.b2, food_{abundance,content}.csv,
-  │                      #   <lev>_counts.csv (root), merged/<lev>_merged.csv, multiqc_report.html
-  ├── strainphlan/       # only if --enable_strainphlan: consensus_markers/<id>.json.bz2 per sample,
-  │                      #   print_clades_only.tsv (available clades), trees/RAxML_* + *.aln (per requested
-  │                      #   clade in strainphlan_clades). SAM alignments are NOT published.
-  └── log/               # MultiQC report (nf-profile-reads-Report_multiqc_report.html + _data/)
-outdir/<project>/combined_bioms/ # single home for ALL biom, one dir per type: metaphlan/ genefamilies/
-                                 #   pathabundance/ reactions/ humann_taxonomy/ medi/ (+ regrouped/ if --humann_regroup)
-outdir/<project>/reports/        # timeline, report, trace (timestamped via params.ts)
-```
-
-Biom are published once, to `combined_bioms/<type>/` only (the per-run
-`combined_tables/` biom copy was dropped as a byte-for-byte duplicate). The
-genefamilies combined TSV is not published either (largest single output, ~24 GB;
-reconstructable from its stratified/unstratified biom). Both via `saveAs`/publishDir
-edits in `modules/community_characterisation.nf`.
-
-Kraken2 intermediates (`.k2`/`.tsv`) and Bracken `*_bracken.tsv` are not published
-— channel-only (publishDir commented out in `subworkflows/quant.nf`). `architeuthis/`
-+ `mappings.csv` only appear with `--mapping` (off by default; absent in the verified run).
 
 ## Tests
 
@@ -282,13 +231,18 @@ When a pipeline run fails on AWS Batch, the diagnosis workflow is:
    `<job-def>/default/<job-id>`). The last few lines usually have the root
    cause.
 3. **Check worker state** — if the error is a missing file/DB, the database
-   may not be present. Currently this means the S3 sync didn't complete;
-   after the custom AMI migration (see `issues/I14-custom-ami-worker.md`),
-   it means the wrong AMI was used. SSH to the worker (if still running)
-   and check `/var/log/nf-userdata.log` and `ls /mnt/dbs/`.
+   may not be present — the boot-time S3 sync didn't complete (all queues run
+   thin AMIs that sync DBs at boot). Connect to the worker (if still running)
+   and check `/var/log/nf-userdata.log` and `ls /mnt/dbs/`. No SSH/keys — use
+   SSM: `aws ssm start-session --target <instance-id> --region us-east-2`
+   from a human operator's own AWS CLI session (their IAM identity has
+   `ssm:StartSession`). The runner's assumed role (`head-node-role`, what
+   Claude Code's `aws` calls run as) does NOT have this permission by
+   design — SSM is for human watchers, not the automation. If Claude needs
+   worker-side visibility, use CloudWatch logs (`/aws/batch/job`) instead.
 4. **Common failure modes**:
-   - "database does not exist" → S3 sync race or wrong AMI (see
-     `infra/readme.md` troubleshooting and `issues/I14-custom-ami-worker.md`).
+   - "database does not exist" → S3 boot-sync race or incomplete sync (see
+     `infra/readme.md` troubleshooting).
    - "Essential container in task exited" → container OOM or command error;
      check CloudWatch logs for the specific error.
    - "Job killed by NF" → Nextflow aborted the run after a different task

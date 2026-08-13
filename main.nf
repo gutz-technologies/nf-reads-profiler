@@ -24,25 +24,30 @@ def helpMessage()
 nf-reads-profiler - Version: ${workflow.manifest.version}
 
   Mandatory arguments:
-    --reads1   R1      Forward (if paired-end) OR all reads (if single-end) path path
-    [--reads2] R2      Reverse reads file path (only if paired-end library layout)
-    --prefix   prefix  Prefix used to name the result files
-    --outdir   path    Output directory (will be outdir/prefix/)
+    --input    path    Samplesheet CSV (fastq_1[,fastq_2][,SRA id]); validated by assets/schema_input.json
+    --project  name    Project name; outputs land under outdir/<project>/ (run fails if unset)
+    --outdir   path    Output base directory (default: results_local_logs)
 
   Main options:
-    --singleEnd  <true|false>   whether the layout is single-end
-    --skipHumann <true|false>   skip HUMAnN3 functional profiling and downstream steps (default: false)
+    --singleEnd          <true|false>  whether the layout is single-end (default: false)
+    --enable_humann      <true|false>  run HUMAnN4 functional profiling and downstream steps (default: true)
+    --enable_medi        <true|false>  run MEDI food-microbiome quantification (default: false; requires enable_humann)
+    --enable_strainphlan <true|false>  emit MetaPhlAn SAM and run StrainPhlAn (default: false; incompatible with skipCompleted)
+    --strainphlan_clades csv           clades to build strain trees for (empty = stop after print_clades)
+    --skipCompleted      <true|false>  skip samples whose HUMAnN4 outputs already exist (default: true)
+    --nreads             int           subsample cap per sample (default: 32000000)
+    --minreads           int           floor; samples below this are dropped, not failed (default: 100000)
 
   Other options:
   MetaPhlAn parameters for taxa profiling:
-    --direct_metaphlan_db path   folder for the MetaPhlAn database
+    --direct_metaphlan_db path    folder for the MetaPhlAn database
     --direct_bt2options   value   BowTie2 options (direct MetaPhlAn)
     --humann_bt2options   value   BowTie2 options (HUMAnN internal MetaPhlAn)
 
-  HUMANn parameters for functional profiling:
-    --taxonomic_profile   path    s3path to precalculate metaphlan3 taxonomic profile output.
-    --humann_chocophlan          path    folder for the ChocoPhlAn database
-    --humann_uniref              path    folder for the UniRef database
+  HUMAnN parameters for functional profiling:
+    --taxonomic_profile   path    s3path to precalculated MetaPhlAn4 taxonomic profile output.
+    --humann_chocophlan   path    folder for the ChocoPhlAn database
+    --humann_uniref       path    folder for the UniRef database
 
 
 nf-reads-profiler supports FASTQ and compressed FASTQ files.
@@ -87,9 +92,9 @@ def output_exists(meta) {
   // MetaPhlAn combine always runs — needs the per-sample biom.
   if (!file("${base}/taxa/${name}_metaphlan.biom").exists()) { return false }
 
-  // HUMAnN combines (skipped when skipHumann) need all four per-sample tables,
+  // HUMAnN combines (skipped when !enable_humann) need all four per-sample tables,
   // including the HUMAnN-internal MetaPhlAn profile that feeds the taxonomy combine.
-  if (!params.skipHumann) {
+  if (params.enable_humann) {
     def humann_done = [
       "${base}/function/${name}_1_metaphlan_profile.tsv",
       "${base}/function/${name}_2_genefamilies.tsv",
@@ -129,6 +134,14 @@ def skipReinject(skipCh, typeName, subdir, suffix) {
 workflow {
   if (params.version) { versionMessage(); exit 0 }
   if (params.help)    { helpMessage();    exit 0 }
+
+  // Require a real project name. The default 'none' silently lands all outputs and
+  // execution reports under <outdir>/none/ — easy to do by forgetting --project or
+  // an unset run config. Fail fast instead. (Report paths additionally need project
+  // set before `includeConfig conf/aws_batch.config`; see that file's note.)
+  if (!params.project || params.project == 'none') {
+    exit 1, "ERROR: params.project is unset (got '${params.project}'). Set --project <name> or params.project in your run config so outputs/reports don't land under '<outdir>/none/'."
+  }
 
   log.info """\
     [PIPELINE] nf-reads-profiler ${workflow.manifest.version} | profile=${workflow.profile}
@@ -218,7 +231,7 @@ workflow {
 
 
   // Functional profiling (HUMAnN4) if not skipped
-  if ( ! params.skipHumann ) {
+  if ( params.enable_humann ) {
     profile_function(merged_reads)
 
     ch_genefamilies = profile_function.out.profile_function_gf
@@ -289,8 +302,8 @@ workflow {
     if (!params.medi_db_path || !params.medi_food_matches || !params.medi_food_contents) {
       error "MEDI quantification requires: medi_db_path, medi_food_matches, and medi_food_contents parameters"
     }
-    if (params.skipHumann) {
-      error "enable_medi requires skipHumann=false — MEDI uses HUMAnN diamond_unaligned reads"
+    if (!params.enable_humann) {
+      error "enable_medi requires enable_humann=true — MEDI uses HUMAnN diamond_unaligned reads"
     }
     // Mapping mode runs a second reduce (merge_mappings) over per-sample mapping
     // summaries. Skipped samples are dropped from the channel and (unlike the food
@@ -349,7 +362,7 @@ workflow {
   }
 
   // Split stratified tables for biom files
-  if (!params.skipHumann) {
+  if (params.enable_humann) {
 
     
 
@@ -383,7 +396,7 @@ workflow {
   ch_multiqc_files = channel.empty()
   ch_multiqc_files = ch_multiqc_files.concat(clean_reads.out.fastp_log)
   // ch_multiqc_files = ch_multiqc_files.concat(profile_taxa.out.profile_taxa_log)
-  if ( ! params.skipHumann ) {
+  if ( params.enable_humann ) {
     ch_multiqc_files = ch_multiqc_files.concat(profile_function.out.profile_function_log)
   }
   

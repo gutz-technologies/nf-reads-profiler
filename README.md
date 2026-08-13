@@ -18,36 +18,29 @@ development.
 kill a foreground Nextflow process.**
 
 ```bash
-# 1. Enable FSR so spot workers boot fast (bills $2.25/hr — run once before the pipeline)
-FSR_CONFIRM=yes infra/packer/enable-fsr.sh
-# Takes 15–30 min to reach 'enabled'; script polls and exits when ready.
-
-# 2. Lock the MEDI Kraken2 hash into RAM — MEDI kraken runs in Docker on this
+# 1. Lock the MEDI Kraken2 hash into RAM — MEDI kraken runs in Docker on this
 # head node; vmtouch warms the shared OS page cache so the container sees it instantly.
 # -d daemonizes so it holds the lock while Nextflow runs.
 vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
 
-# 3. Start a named screen session and run the pipeline
+# 2. Start a named screen session and run the pipeline
 screen -S nf-aws
 nextflow run main.nf -profile aws \
   --input s3://gutz-nf-reads-profilers-runs/samplesheets/<name>.csv \
   --project <project_name> -resume
 
-# 4. From another terminal: follow Nextflow's own log
+# 3. From another terminal: follow Nextflow's own log
 tail -f .nextflow.log
 grep "status: COMPLETED" .nextflow.log | grep -oP "name: \K\S+" | sort | uniq -c
 
 
-# 5. After the pipeline finishes: release the lock and stop FSR billing
+# 4. After the pipeline finishes: release the MEDI hash lock
 pkill vmtouch
-infra/packer/disable-fsr.sh
 ```
 
-`enable-fsr.sh` resolves the current worker AMI from SSM (`/nf-reads-profiler/ami-id`)
-and enables FSR across all three `us-east-2` AZs. `disable-fsr.sh` is a kill-switch
-that disables all FSR-enabled snapshots in the region — including any stale AMI snapshots
-after a rollover. Minimum billing is 1 hour per enable-cycle regardless of how quickly
-you disable.
+To watch a Batch worker live (e.g. tail `/var/log/nf-userdata.log` for the boot-time
+DB copy): `aws ssm start-session --target <instance-id> --region us-east-2` — no SSH
+keys, but needs `ssm:StartSession` on your runner role (not granted by default).
 
 Samplesheets live in `s3://gutz-nf-reads-profilers-runs/samplesheets/`. See
 `samplesheets/slice.md` (also in that bucket) for how to build new slices.
@@ -66,15 +59,37 @@ vmtouch -dl /mnt/scratch/ssddbs/medi_db/hash.k2d
 nextflow run main.nf -profile test_medi -resume
 ```
 
-### Infrastructure scripts
+`screen` basics: detach with `Ctrl+A D`, reattach with `screen -r <name>`, list
+with `screen -ls`.
 
-| Script | Purpose |
-|--------|---------|
-| `infra/smoke-test.sh` | 2-sample end-to-end smoke test on AWS Batch |
-| `infra/max005_test.sh` | 5-sample scaling baseline (I16); must run under screen |
-| `infra/medi_test.sh` | Full MEDI end-to-end test; must run under screen |
-| `infra/packer/enable-fsr.sh` | Enable EBS Fast Snapshot Restore so spot queue VMs dehydrate faster |
-| `infra/packer/disable-fsr.sh` | Disable FSR after run to stop $0.75/AZ/hr billing |
+### Profiles
+
+Profile-to-config mapping (`nextflow.config`):
+
+- `aws` → `conf/aws_batch.config` (S3 workDir, `awsbatch` executor, Graviton spot queues)
+- `azure` → `conf/azurebatch.config`
+- `test` → `conf/test.config` (local Docker, tiny `nreads`/`minreads`)
+- `test_medi` → `conf/test_medi.config` (extends `test`; enables MEDI, sets ssddbs paths, disables cleanup)
+
+### Detecting when a run has ended
+
+A finished run leaves no `nextflow run` process and no Docker containers, but
+those alone are racy. Reliable signals, in order of preference:
+
+- **`.nextflow.log`** — the definitive end marker is the final line
+  `Execution complete -- Goodbye` (preceded by `Session await > all barriers
+  passed`). Grep it: `grep -c 'Execution complete -- Goodbye' .nextflow.log`.
+  This is written for both success and failure.
+- **Console/tee output** — the pipeline prints `[SUCCESS] completed=N failed=M
+  cached=K` (or a failure summary) as its last lines. Good for at-a-glance
+  status, but only present if you teed stdout (e.g. `... | tee /tmp/run.out`).
+- **`nextflow log` / `.nextflow/history`** — the run's status column flips to
+  `OK`/`ERR` once it ends; `-` means still running or killed. Lags slightly
+  behind the log's Goodbye line.
+
+Don't rely on the `screen` session disappearing — if you launched with
+`screen -dmS name bash -c "... | tee ..."`, the session ends the instant the
+command returns, so its absence tells you nothing about success vs. failure.
 
 ## Output
 
@@ -86,7 +101,7 @@ combines → project-wide biom rollup. Layout below was verified against a real
 outdir/<project>/<run>/
   ├── readcount/<id>_readcount.txt          # read count per sample
   ├── taxa/<id>_metaphlan.biom              # MetaPhlAn4 profile per sample
-  ├── function/                             # HUMAnN4, per sample (skipped if --skipHumann)
+  ├── function/                             # HUMAnN4, per sample (only if --enable_humann, default true)
   │     ├── <id>_0.log
   │     ├── <id>_1_metaphlan_profile.tsv    # HUMAnN-internal MetaPhlAn
   │     ├── <id>_2_genefamilies.tsv
@@ -136,69 +151,24 @@ clade detection and tree build, so the run errors fast if both are set.
 
 ## Databases
 
-Although the databases have been stored at the appropriate `/mnt/efs/databases` location mentioned in the config file. There might come a time when these need to be updated. Here is a quick view on how to do that.
+All profiles expect pre-staged databases; nothing is downloaded at runtime.
 
-### Metaphlan4
+### Parameters and staging paths
 
-```{bash}
-cd /mnt/efs/databases/Biobakery/Metaphlan/v4.0
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-    metaphlan \
-        --install \
-        --nproc 4 \
-        --bowtie2db .
-```
+| Param | Purpose |
+|-------|---------|
+| `direct_metaphlan_id` / `direct_metaphlan_db` | Standalone MetaPhlAn (newer DB, e.g. `mpa_vJan25_CHOCOPhlAnSGB_202503`) |
+| `humann_metaphlan_index` / `humann_metaphlan_db` | MetaPhlAn DB matched to HUMAnN4 (e.g. `mpa_vOct22_CHOCOPhlAnSGB_202403`) |
+| `humann_chocophlan` / `humann_uniref` / `humann_utilitymap` | HUMAnN4 nucleotide/protein/mapping DBs |
+| `medi_db_path` / `medi_food_matches` / `medi_food_contents` | MEDI Kraken2+Bracken DB and food metadata |
 
-### Humann3
+Staging paths differ per profile:
 
-This requires 3 databases.
-
-#### Chocophlan
-
-```{bash}
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-        humann_databases \
-        --download \
-            chocophlan full .
-```
-
-This will create a subdirectory `chocophlan`, and download and extract the database here.
-
-#### Uniref
-
-```{bash}
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-        humann_databases \
-        --download \
-        uniref uniref90_diamond .
-```
-
-This will create a subdirectory `uniref`, and download and extract the database here.
-
-#### Utility Script Databases
-
-```bash
-cd /mnt/efs/databases/Biobakery/Humann/v3.6
-docker container run \
-    --volume $PWD:$PWD \
-    --workdir $PWD \
-    --rm \
-    458432034220.dkr.ecr.us-west-2.amazonaws.com/biobakery/workflows:maf-20221028-a1 \
-    humann_databases \
-        --download \
-        utility_mapping full .
-```
+- Local / `test_medi`: `/mnt/scratch/ssddbs/...` — synced from
+  `s3://cjb-gutz-s3-demo` to the instance-store RAID at `/mnt/scratch/ssddbs/`.
+  `docker.runOptions` in `nextflow.config` bind-mounts this into Docker. vJan25
+  was installed via `metaphlan --install` and is now in both ssddbs and S3.
+- AWS: `/mnt/dbs/...` — each per-database queue's workers sync their DB set from
+  S3 to `/mnt/dbs/` at boot on the thin stock AMI (no baked DBs). The
+  `spot-metaphlan` queue copies vJan25 from S3 (see
+  `infra/multiqueue-design.md`).

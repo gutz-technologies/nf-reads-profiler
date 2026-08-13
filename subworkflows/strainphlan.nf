@@ -7,7 +7,8 @@
     https://github.com/biobakery/MetaPhlAn/wiki/StrainPhlAn-4.1
 
   Steps:
-    1. sample2markers  (per sample)  SAM.bz2 -> <id>.json.bz2 consensus markers
+    1. sample2markers  (per run)     SAM.bz2 -> <id>.json.bz2 consensus markers
+                                     (all a run's SAMs in one job; .pkl loads once)
     2. print_clades    (per run)     all sample markers -> clades detectable across samples
     3. extract_markers (per run/clade) pull the chosen clade's markers from the MetaPhlAn DB
     4. strainphlan     (per run/clade) markers -> multiple-seq alignment + RAxML tree (.tre)
@@ -19,30 +20,31 @@
   Channel key throughout is `run` (the study grouping), matching the rest of the pipeline.
 */
 
-// STEP 1 — per-sample consensus markers from the MetaPhlAn SAM.
+// STEP 1 — consensus markers from MetaPhlAn SAMs, in fixed-size sample batches.
 process sample2markers {
 
-    tag "$name"
+    tag "${run} batch ${batch} (${sams instanceof List ? sams.size() : 1} samples)"
     container params.docker_container_metaphlan
-    // Single-threaded when run on single samples post alignment. cpus lives here, memory in config.
-    cpus 1
     publishDir { "${params.outdir}/${params.project}/${run}/strainphlan/consensus_markers" }, mode: 'copy', pattern: "*.json.bz2"
 
     input:
-    tuple val(meta), path(sam)
+    tuple val(run), val(batch), path(sams)
 
     output:
-    tuple val(meta), path("*.json.bz2"), emit: markers
+    tuple val(run), path("*.json.bz2"), emit: markers
 
     script:
-    name = task.ext.name ?: "${meta.id}"
-    run  = task.ext.run  ?: "${meta.run}"
+    // MEMORY: --nprocs loads the DB once, but still needs a full copy per thread.
+    // Measured at 15 GB/thread max for metaphlan vJan25,
+    // Size cpus/memory together in conf/aws_batch.config.
+    // Too little memory causes silent hangs after OOM kill is ignored
     """
     sample2markers.py \\
-        -i ${sam} \\
+        -i ${sams} \\
         -o . \\
         -d ${params.direct_metaphlan_db}/${params.direct_metaphlan_id}.pkl \\
-        --input_format bz2
+        --input_format bz2 \\
+        --nprocs ${task.cpus}
     """
 }
 
@@ -58,8 +60,7 @@ process print_clades {
     tuple val(run), path(markers)
 
     output:
-    // StrainPhlAn --print_clades_only writes the clade table to print_clades_only.tsv
-    // in the output dir (not stdout).
+    // StrainPhlAn --print_clades_only actualy writes a file, not stdout
     tuple val(run), path("print_clades_only.tsv"), emit: clades
 
     script:
@@ -153,13 +154,26 @@ workflow STRAINPHLAN {
         sams   // channel of [meta, sam.bz2] from profile_taxa.out.sam
 
     main:
-        // STEP 1: per-sample markers
-        sample2markers(sams)
-
-        // Group every sample's markers by run.
-        markers_by_run = sample2markers.out.markers
-            .map { meta, markers -> [ meta.run, markers ] }
+        // STEP 1: gather each run's SAMs, then chop into fixed-size batches so a
+        // single sample2markers job never grows with run size. Batches stay
+        // within a run so each output marker tags back to the right run.
+        // Sort by filename BEFORE collate. Sorting makes batch membership a
+        // pure function of the SAM set, so a -resume cache-hits all markers.
+        sams_batched = sams
+            .map { meta, sam -> [ meta.run, sam ] }
             .groupTuple()
+            .flatMap { run, sms ->
+                sms.sort { sam -> sam.name }.collate(params.strainphlan_batch_size).withIndex().collect { chunk, i -> tuple(run, i, chunk) }
+            }
+
+        sample2markers(sams_batched)
+
+        // Recombine every batch's per-sample markers back into one list per run for the
+        // print_clades reduce. groupTuple gathers chunks by run -> [run, [[..],[..]]];
+        // flatten() collapses the per-batch lists into a single flat marker list.
+        markers_by_run = sample2markers.out.markers
+            .groupTuple()
+            .map { run, markers -> tuple(run, markers.flatten()) }
 
         // STEP 2: which clades are shared across the run's samples
         print_clades(markers_by_run)
