@@ -19,19 +19,22 @@ process profile_taxa {
   // onto idle cores without reserving them from the queue.
   container params.docker_container_metaphlan
 
-  publishDir {"${params.outdir}/${params.project}/${run}/taxa"}, mode: 'copy', pattern: "*.{biom,tsv,txt,bz2}"
+  publishDir {"${params.outdir}/${params.project}/${run}/taxa"}, mode: 'copy', pattern: "*.{biom,tsv,txt}"
 
   input:
   tuple val(meta), path(reads)
 
   output:
   tuple val(meta), path("*_metaphlan.biom"), emit: to_profile_function_bugs
+  // SAM alignment when --enable_strainphlan, otherwise --no_map
+  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: !params.enable_strainphlan
   // tuple val(meta), path("*_profile_taxa_mqc.yaml"), emit: profile_taxa_log
 
 
   script:
   name = task.ext.name ?: "${meta.id}"
   run = task.ext.run ?: "${meta.run}"
+  sam_opts = params.enable_strainphlan ? "-s ${name}.sam.bz2" : "--no_map"
   """
   echo ${params.direct_metaphlan_db}
 
@@ -44,10 +47,9 @@ process profile_taxa {
     --sample_id ${name} \\
     --biom_format_output \\
     --nproc ${task.cpus * 2} \\
-    --no_map \\
+    ${sam_opts} \\
     --output_file ${name}_metaphlan.biom \\
-    $reads \\
-    
+    $reads
 
   # MultiQC doesn't have a module for Metaphlan yet. As a consequence, I
   # had to create a YAML pathwith all the info I need via a bash script
