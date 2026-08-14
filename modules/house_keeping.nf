@@ -87,6 +87,7 @@ process clean_reads {
     --dedup \\
     --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
+    --fix_mgi_id \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}
     """
@@ -102,6 +103,7 @@ process clean_reads {
     --dedup \\
     --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
+    --fix_mgi_id \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}
 
