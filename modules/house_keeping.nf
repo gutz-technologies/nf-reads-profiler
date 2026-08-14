@@ -85,6 +85,7 @@ process clean_reads {
     -o ${name}_trimmed.fq.gz \\
     --reads_to_process ${params.nreads} \\
     --dedup \\
+    --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}
@@ -99,6 +100,7 @@ process clean_reads {
     -O out.R2.fq.gz \\
     --reads_to_process ${params.nreads} \\
     --dedup \\
+    --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}

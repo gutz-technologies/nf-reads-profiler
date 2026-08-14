@@ -347,8 +347,35 @@ Neither blocks the run; both are cheap to add later since they don't touch
 - 3 non-FASTQ objects sit in the source prefix (`Biografia.docx`, the transfer
   manifest, and one zero-length partial); the manifest ignores them.
 
-## Open decision
+## Revision 2026-08-14 — the cap is gone
 
-**Stage set** for the full run: full capability like cosmosid-infant (taxa +
-HUMAnN + MEDI + StrainPhlAn) vs. a narrower first pass. Everything else in this
-plan is settled.
+The depth cap was dropped after this document was written: the run profiles
+**every read of every sample** (`nreads = 0` in `conf/gemma.config`, stage 1 run
+with `--cap 0`). Read the capping analysis above as the rationale for the
+*batching*, which survives, not for a cap that is still applied.
+
+What changes:
+
+- **Stage 1 is one path.** With `--cap 0` both batches plain-`cat` every lane;
+  the proportional-sampling code stays in `preprocess_gemma.nf` but is unused
+  for this cohort. No decompress/recompress anywhere.
+- **The 5% is kept.** 23.17 G pairs instead of 21.99 G. All of the difference is
+  in the 80 `over32m` samples (3.74 G vs 2.56 G pairs, +46%); `under32m` is
+  untouched, since every sample in it is ≤ 32M pairs already.
+- **`under32m`/`over32m` still are the run keys**, frozen from
+  `gemma_runs_by_cap.tsv` as described above. They now denote a depth split
+  rather than a capping rule — re-labelling would re-hash every task.
+- **Per-task resources had to be re-sized**, since `conf/aws_batch.config` was
+  tuned against 32M pairs. `conf/gemma.config` overrides `count_reads`,
+  `clean_reads`, `profile_taxa`, `profile_function` with per-attempt time
+  ladders and raises `resourceLimits.time` to 12 h.
+- **Dedup:** one post-merge `fastp --dedup` (unchanged), *not* per-lane — the
+  duplicates that matter in GEMMA are cross-flowcell, because the extra
+  flowcells are re-sequencing of the same library. Since fastp's dedup table is
+  fixed size (1/2/4/8/16/32 GB for `--dup_calc_accuracy` 1–6, measured flat at
+  4.20 GB RSS across 1898 cosmosid-infant tasks), uncapped depth raises the
+  false-positive/over-dedup rate; the `over32m` run therefore adds
+  `--fastp_dedup_accuracy 6`.
+
+**Stage set** (the open decision above) is settled: taxa + HUMAnN + MEDI,
+StrainPhlAn off.

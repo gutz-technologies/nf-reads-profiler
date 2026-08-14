@@ -42,7 +42,9 @@ nextflow.enable.dsl = 2
 params.manifest      = null
 params.outprefix     = 's3://gutz-nf-reads-profilers-workdir/preprocessed/gemma'
 params.logdir        = 's3://gutz-nf-reads-profilers-runs/results/gemma/preprocess'
-params.cap           = 32000000   // PAIRS, matching params.nreads in nextflow.config
+params.cap           = 32000000   // PAIRS, matching params.nreads in nextflow.config.
+                                  // 0 = NO CAP: every lane is cat'd whole, both batches.
+                                  // Keep in sync with params.nreads of the stage-2 run.
 params.samples       = ''         // comma-separated subset (smoke slice); empty = all
 params.skip_existing = true       // skip samples whose R1+R2 are already in S3
 params.dry_run       = false
@@ -86,11 +88,12 @@ LANESPEC
     TOTAL=\$(awk -F'\\t' '{s+=\$4} END{print s+0}' lanes.tsv)
     NLANES=\$(wc -l < lanes.tsv)
 
-    if [ "\$TOTAL" -le "\$CAP" ]; then MODE=cat; else MODE=proportional; fi
+    # CAP=0 means no cap at all -- every sample takes the cat path.
+    if [ "\$CAP" -le 0 ] || [ "\$TOTAL" -le "\$CAP" ]; then MODE=cat; else MODE=proportional; fi
 
     # plan.tsv adds k = pairs to take from this lane (all of them below the cap)
     awk -F'\\t' -v cap="\$CAP" -v tot="\$TOTAL" 'BEGIN{OFS="\\t"}
-        { k = (tot <= cap) ? \$4 : int(\$4 * cap / tot + 0.5); print \$0, k }' \\
+        { k = (cap <= 0 || tot <= cap) ? \$4 : int(\$4 * cap / tot + 0.5); print \$0, k }' \\
         lanes.tsv > plan.tsv
 
     # Expected upload sizes drive the multipart chunk size: without them the CLI
