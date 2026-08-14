@@ -362,9 +362,8 @@ What changes:
 - **The 5% is kept.** 23.17 G pairs instead of 21.99 G. All of the difference is
   in the 80 `over32m` samples (3.74 G vs 2.56 G pairs, +46%); `under32m` is
   untouched, since every sample in it is ≤ 32M pairs already.
-- **`under32m`/`over32m` still are the run keys**, frozen from
-  `gemma_runs_by_cap.tsv` as described above. They now denote a depth split
-  rather than a capping rule — re-labelling would re-hash every task.
+- **The run keys were then replaced outright** — see *Revision 2 — batches split
+  on file size* below. `under32m`/`over32m` are retired.
 - **Per-task resources had to be re-sized**, since `conf/aws_batch.config` was
   tuned against 32M pairs. `conf/gemma.config` overrides `count_reads`,
   `clean_reads`, `profile_taxa`, `profile_function` with per-attempt time
@@ -395,3 +394,48 @@ What changes:
 
 **Stage set** (the open decision above) is settled: taxa + HUMAnN + MEDI,
 StrainPhlAn off.
+
+## Revision 2 (2026-08-14) — batches split on file size
+
+The `under32m`/`over32m` labels are retired. **No read count was ever measured
+for this cohort**: `est_reads` in the manifests is `bytes ÷ constant`, with the
+constant assumed to be 141 B/read (V350) and 75.5 B/read (DL100). Since the
+batch label was byte-derived all along, the honest split is on the quantity we
+actually know — bytes.
+
+**New batches: `under8g` / `over8g`, split on total sample gz bytes (R1 + R2,
+all lanes) at 8×10⁹.**
+
+| batch | samples | files | TB | est pairs | size median | size max |
+|---|---:|---:|---:|---:|---:|---:|
+| `under8g` | 1252 | 8930 | 4.93 | 19.53 G | 5.18 GB | 8.00 GB |
+| `over8g` | 104 | 856 | 1.18 | 4.45 G | 9.38 GB | 111.62 GB |
+
+56 samples change batch relative to the old labels. Manifests
+`gemma_manifest_{under8g,over8g}.tsv` are pre-sorted — `under8g` smallest-first,
+`over8g` largest-first, lanes contiguous per sample — and their `run` column
+carries the batch label.
+
+### The bytes→reads constant, measured
+
+24 files streamed and counted exactly (`aws s3 cp - | zcat | wc -l`):
+
+| platform | read | n | B/read median | spread |
+|---|---|---:|---:|---:|
+| V350 | R1 | 7 | 135.4 | 5.7% |
+| V350 | R2 | 5 | 136.1 | 8.5% |
+| DL100 | R1 | 6 | 72.1 | 17.6% |
+| DL100 | R2 | 6 | 81.8 | 20.3% |
+
+The old constants were ~4% high on R1 (median `est_reads` error −3.9%, range
+−9.5% to +6.5%). So 32M pairs is **8.69 GB** of V350 FASTQ pair but **4.93 GB**
+of DL100 — an 8 GB threshold is ~29M pairs on V350 and ~55M on DL100. The
+batches are size classes, not depth classes.
+
+**The 1.9× is quality-score entropy, not read length.** Both platforms are
+150 bp (mode 150 in 85–96% of reads, mean 148–149 after INRAE trimming), ~333
+raw bytes/read, 40 distinct Q symbols, identical gzip settings. But V350 quality
+strings carry 3.7–3.9 bits/base with no symbol above 19%, while DL100's carry
+0.5–0.9 bits with one symbol at 91–95%: the qual stream is half the raw bytes
+and it nearly vanishes under gzip on DL100. DL100 read names also come in two
+lengths (33 vs 55 B), which is part of why its per-file spread is 3× V350's.
