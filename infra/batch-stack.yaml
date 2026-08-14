@@ -384,6 +384,10 @@ Resources:
                 Resource:
                   - arn:aws:s3:::gutz-data-globus
                   - arn:aws:s3:::gutz-data-globus/*
+                  # GEMMA source FASTQ (gemma-fastq/inrae-fastq/), read by the
+                  # lane-merge preprocessing stage.
+                  - arn:aws:s3:::gutz-data-s3
+                  - arn:aws:s3:::gutz-data-s3/*
         - PolicyName: CloudWatchLogs
           PolicyDocument:
             Version: '2012-10-17'
