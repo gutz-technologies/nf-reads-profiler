@@ -368,7 +368,23 @@ What changes:
 - **Per-task resources had to be re-sized**, since `conf/aws_batch.config` was
   tuned against 32M pairs. `conf/gemma.config` overrides `count_reads`,
   `clean_reads`, `profile_taxa`, `profile_function` with per-attempt time
-  ladders and raises `resourceLimits.time` to 12 h.
+  ladders and raises `resourceLimits.time` to 24 h.
+- **Runtime calibration**, `hours = slope × pairs/10M + fixed`:
+
+  | source | method | HUMAnN | MetaPhlAn | humann cpus |
+  |---|---|---:|---:|---:|
+  | cosmosid-infant, 2098 samples | trace `realtime` | 0.563 | 0.067 | 16 |
+  | cosmosid-infant, 50 samples | HUMAnN log TIMESTAMPs | 0.495 | 0.057 | 16 |
+  | diversigen-infant, 87 samples | HUMAnN log TIMESTAMPs | 0.954 | 0.219 | 8 |
+
+  The two cosmosid fits agree, which validates the log method; diversigen is
+  ~2× slower because `profile_function` ran at `cpus = 8` there (raised to 16 in
+  `25fbb00`, 2026-06-22, between the two runs). GEMMA uses the 16-cpu config, so
+  the cosmosid slopes apply: ~2.2 h of HUMAnN at the over32m median (38.9M
+  pairs), ~3.5 h at p90 (61M), **20–22 h for `GMA_353` (395.8M)**. Neither
+  cohort exceeded 19.5M pairs, so the tail is a 21× extrapolation. `GMA_353` is
+  best run alone afterwards (cpus 24, or on-demand) rather than sizing the whole
+  cohort around it.
 - **Dedup:** one post-merge `fastp --dedup` (unchanged), *not* per-lane — the
   duplicates that matter in GEMMA are cross-flowcell, because the extra
   flowcells are re-sequencing of the same library. Since fastp's dedup table is
