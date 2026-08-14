@@ -58,8 +58,16 @@ params.docker_container_aws = '730883236839.dkr.ecr.us-east-2.amazonaws.com/aws-
  * full copy in the S3 workDir before publishDir copied it again. The declared
  * output is the per-sample log. Consequence: `-resume` trusts the task cache, not
  * the objects -- if a published FASTQ is deleted (the workdir bucket has a 30-day
- * lifecycle) a resume will NOT notice. Re-run with --skip_existing true, which
- * checks S3 directly and skips only what is really there.
+ * lifecycle, same gotcha CLAUDE.md documents for the main pipeline's workDir) a
+ * resume will NOT notice: the cached task is reported complete even though its
+ * output no longer exists in S3. This is inherent to the no-double-copy design
+ * above, not fixable by adding an `output:` block without reintroducing that
+ * second full copy -- so it is intentionally NOT routed through Nextflow's own
+ * cache. Real recovery instead goes through --skip_existing (see its S3 existence
+ * + integrity check inline below), which talks to S3 directly and is independent
+ * of -resume/task-cache state entirely. If the 30-day window has already passed
+ * on a `-resume` attempt, don't trust -resume for this workflow at all -- do a
+ * fresh (non-resumed) run with --skip_existing true instead.
  */
 process GEMMA_MERGE_LANES {
     tag "${meta.id}"
@@ -102,9 +110,27 @@ LANESPEC
     EXP1=\$(awk -F'\\t' '{s += \$5 * \$7 / (\$4 ? \$4 : 1)} END{printf "%d", s+1}' plan.tsv)
     EXP2=\$(awk -F'\\t' '{s += \$6 * \$7 / (\$4 ? \$4 : 1)} END{printf "%d", s+1}' plan.tsv)
 
+    # skip_existing only trusts a destination object if it looks complete, not
+    # merely present: an interrupted `aws s3 cp - <key>` streaming upload can
+    # still land a truncated object at the key, and a bare `aws s3 ls` exit-0
+    # check would then skip re-processing that sample forever (this is also
+    # the ONLY integrity check we get -- see the -resume note above process:
+    # Nextflow's own cache doesn't track these FASTQs). No transformation
+    # happens in `cat` mode (raw gzip-member concatenation), and the
+    # `proportional` mode already discounts EXP1/EXP2 for the sampled
+    # fraction, so comparing the live object size against EXP1/EXP2 (already
+    # computed above for --expected-size) is a strong integrity signal here.
+    # Reject zero/near-empty objects outright and require the rest to be
+    # within 5% of expected.
+    MIN_OK_BYTES=1000
+    SIZE1=\$(aws s3 ls "${out1}" 2>/dev/null | awk '{print \$3}')
+    SIZE2=\$(aws s3 ls "${out2}" 2>/dev/null | awk '{print \$3}')
+    SIZE1=\${SIZE1:-0}
+    SIZE2=\${SIZE2:-0}
     if [ "${params.skip_existing}" = "true" ] \\
-       && aws s3 ls "${out1}" > /dev/null 2>&1 \\
-       && aws s3 ls "${out2}" > /dev/null 2>&1; then
+       && [ "\$SIZE1" -ge "\$MIN_OK_BYTES" ] && [ "\$SIZE2" -ge "\$MIN_OK_BYTES" ] \\
+       && [ "\$SIZE1" -ge \$(( EXP1 * 95 / 100 )) ] \\
+       && [ "\$SIZE2" -ge \$(( EXP2 * 95 / 100 )) ]; then
         MODE=skipped
     fi
     if [ "${params.dry_run}" = "true" ] && [ "\$MODE" != "skipped" ]; then
@@ -202,8 +228,18 @@ workflow {
 
     GEMMA_MERGE_LANES(samples)
 
+    // Batch label for the summary filename: derived from --manifest itself (one
+    // manifest == one batch per invocation, e.g. gemma_manifest_under8g.tsv), not
+    // from meta.run pulled off the channel, so it's known synchronously at
+    // workflow-definition time rather than depending on channel-emission timing.
+    // Without this, two sequential invocations against the same --logdir (one per
+    // batch, per this file's usage) silently overwrite each other's summary.
+    def batchLabel = new File(params.manifest).name
+        .replaceFirst(/^gemma_manifest_/, '')
+        .replaceFirst(/\.tsv$/, '')
+
     GEMMA_MERGE_LANES.out.log
         .map { meta, log -> log.text.readLines()[1] + '\n' }
-        .collectFile(name: 'preprocess_summary.tsv', storeDir: params.logdir, sort: true,
+        .collectFile(name: "preprocess_summary_${batchLabel}.tsv", storeDir: params.logdir, sort: true,
                      seed: "sample\trun\tmode\tn_lanes\tcap_pairs\test_total_pairs\tplanned_pairs\n")
 }
