@@ -123,8 +123,8 @@ LANESPEC
     # Reject zero/near-empty objects outright and require the rest to be
     # within 5% of expected.
     MIN_OK_BYTES=1000
-    SIZE1=\$(aws s3 ls "${out1}" 2>/dev/null | awk '{print \$3}')
-    SIZE2=\$(aws s3 ls "${out2}" 2>/dev/null | awk '{print \$3}')
+    SIZE1=\$(aws s3 ls "${out1}" 2>/dev/null | awk '{print \$3}' || true)
+    SIZE2=\$(aws s3 ls "${out2}" 2>/dev/null | awk '{print \$3}' || true)
     SIZE1=\${SIZE1:-0}
     SIZE2=\${SIZE2:-0}
     if [ "${params.skip_existing}" = "true" ] \\
