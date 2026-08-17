@@ -4,28 +4,46 @@ Goal: stand up a **new, isolated** set of Batch CEs/queues on Graviton5
 instances and re-run the gemma-smoke slice against them, to compare against
 the existing Graviton4 (c8g/m8g/...) fleet. Does not touch prod CEs/queues.
 
-## Graviton5 availability (as of 2026-08, vantage.sh)
+## Graviton5 availability — VALIDATED live against AWS (us-east-2), 2026-08-17
 
-Only `c9g` and `m9g` families exist so far (launched June 2026). No `r9g`,
-`i9g`, `x9g`, and no NVMe/local-storage variants (`*d`, `*n`, `*gd`) yet.
+`describe-instance-types` + `describe-instance-type-offerings` +
+`describe-spot-price-history` in `us-east-2`. All 10 vantage-listed types
+confirmed to exist, offered in all 3 AZs (a/b/c):
 
-Confirmed specs (us-east-2 pricing per vantage.sh, unverified against live AWS
-API — see validation task below):
-
-| Type | vCPU | Mem | On-demand $/hr | Spot $/hr |
+| Type | vCPU | Mem GiB | Spot $/hr | Spot $/vCPU/hr |
 |---|---:|---:|---:|---:|
-| c9g.24xlarge | 96 | 192 GiB | 4.173 | 1.542 |
-| c9g.48xlarge | 192 | 384 GiB | 8.346 | 3.415 |
-| c9g.metal-48xl | 192 | 384 GiB | 8.346 | 2.620 |
-| m9g.24xlarge | 96 | 384 GiB | 4.70 | 2.16 |
-| m9g.metal-48xl | 192 | 768 GiB | 9.39 | 2.55 |
+| c9g.2xlarge | 8 | 16 | 0.093 | 0.0116 |
+| c9g.4xlarge | 16 | 32 | 0.254 | 0.0159 |
+| c9g.12xlarge | 48 | 96 | 0.559 | 0.0117 |
+| c9g.24xlarge | 96 | 192 | 0.944 | 0.0098 |
+| c9g.48xlarge | 192 | 384 | 2.358 (jitters 1.68-2.38) | 0.0123 |
+| **c9g.metal-48xl** | 192 | 384 | **0.832 (flat)** | **0.0043 — cheapest/vCPU** |
+| m9g.2xlarge | 8 | 32 | 0.127 | 0.0159 |
+| m9g.4xlarge | 16 | 64 | 0.301 | 0.0188 |
+| m9g.24xlarge | 96 | 384 | 1.251 | 0.0130 |
+| m9g.metal-48xl | 192 | 768 | 0.939 (flat) | 0.0049 |
 
-`m9g.metal-48xl` spot ($2.55/hr for 192 vCPU / 768 GiB = ~$0.0133/vCPU/hr) is
-the cheapest per-vCPU pool seen — cheaper than c9g.metal-48xl spot
-(~$0.0136/vCPU/hr) despite 2x the memory. Worth leading with it in the new
-metaphlan/humann CEs' `InstanceTypes` list once existence + capacity are
-confirmed live (SPOT_PRICE_CAPACITY_OPTIMIZED will still spread across the
-listed pools; order mainly documents intent).
+**Correction to earlier claim:** `m9g.metal-48xl` is NOT the cheapest
+per-vCPU pool. `c9g.metal-48xl` is, at $0.0043/vCPU/hr vs m9g.metal-48xl's
+$0.0049/vCPU/hr (~13% cheaper). Both metal-48xl types show unusually flat
+spot pricing vs. the jittery sized variants — consistent with thin/new
+supply, so treat as provisional until real Batch usage tests it.
+
+**Correction to NVMe-variant assumption:** vantage.sh was wrong — live AWS
+confirms `c9gd.24xlarge` (96 vCPU/192GiB + 3x1900GB local NVMe) and
+`m9gd.metal-48xl` (192 vCPU/768GiB + 3x3800GB local NVMe) **do exist** in
+us-east-2. `r9g`, `i9g`, `x9g`, `c9gn`, `m9gn` confirmed non-existent
+(`InvalidInstanceType`) — those gaps stand. The NVMe finding reopens
+possibilities for DB-staging queues (spot-medi still has no fit — no
+high-mem 8-16GB/vCPU G5 family — but c9gd/m9gd NVMe could matter for
+metaphlan/humann DB staging if ever revisited).
+
+**AMI check:** SSM param
+`/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id`
+resolves fine (`ami-01072f6f8844e1659`, modified 2026-08-07). No AWS docs
+found confirming Graviton5 boot support explicitly. Same ARM64/Neoverse
+architecture family as Graviton3/4, so likely boots, but **unverifiable
+read-only — must smoke-test with a real launch**, not assume.
 
 ## Instance map: Graviton4 (current) -> Graviton5 (new test CEs)
 
@@ -54,21 +72,16 @@ listed pools; order mainly documents intent).
 2. New parallel CEs/queues, cloned from existing launch templates (same
    UserData/boot logic): `spot-queue-g5`, `spot-metaphlan-g5`,
    `spot-humann-g5`. No `spot-medi-g5` (no fit yet).
-3. `InstanceTypes` per new CE limited to verified-existing pools only:
-   `c9g.2xlarge/4xlarge/12xlarge/24xlarge/48xlarge/metal-48xl`,
-   `m9g.2xlarge/4xlarge/24xlarge/metal-48xl`. Drop all `*d`/`*n`/`*gd` and the
-   1.5TB / 16GB-per-vCPU tiers.
-4. **Blocking validation before any deploy** (delegated to subagent, see
-   below):
-   - Do `c9g`/`m9g` (all sizes above, esp. `m9g.metal-48xl`) actually exist
-     and have capacity in `us-east-2`? Verify via
-     `aws ec2 describe-instance-type-offerings` /
-     `describe-instance-types`, not just vantage.sh.
-   - Current on-demand + spot pricing in `us-east-2` specifically (vantage
-     numbers above may be a different region's default).
-   - Does the ECS-optimized ARM64 AMI (or whatever AMI the thin-AMI boot
-     path resolves) support booting on Graviton5? Brand-new silicon
-     (June 2026) — Batch/ECS support unconfirmed.
+3. `InstanceTypes` per new CE — all 10 base types confirmed live, plus
+   `c9gd.24xlarge` and `m9gd.metal-48xl` (NVMe, confirmed live, vantage was
+   wrong about these not existing). Lead with `c9g.metal-48xl` for
+   best $/vCPU (0.0043), not m9g.metal-48xl. `r9g`/`i9g`/`x9g`/`c9gn`/`m9gn`
+   confirmed genuinely non-existent — no fit for spot-medi or the
+   16GB/vCPU StrainPhlAn tier still stands.
+4. **Blocking validation — DONE 2026-08-17** (live AWS API, us-east-2):
+   all 10 base types + c9gd.24xlarge + m9gd.metal-48xl exist, all 3 AZs.
+   ECS ARM64 AMI param resolves; boot support on G5 unconfirmed by docs,
+   residual risk flagged for real-launch smoke test (step 6).
 5. `cfn-lint infra/*.yaml` after any CFN edits.
 6. Baseline: reuse the existing gemma-smoke slice (7 under8g + 3 over8g,
    same samplesheet, same `conf/gemma.config` mem ladder), routed via a new
