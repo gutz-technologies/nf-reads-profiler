@@ -38,6 +38,48 @@ possibilities for DB-staging queues (spot-medi still has no fit — no
 high-mem 8-16GB/vCPU G5 family — but c9gd/m9gd NVMe could matter for
 metaphlan/humann DB staging if ever revisited).
 
+## spot-medi >500GB-RAM candidate — deep price/capacity check, 2026-08-17
+
+Only two G5 types clear 500 GiB RAM: `m9g.metal-48xl` (768GiB, no NVMe) and
+its NVMe sibling `m9gd.metal-48xl` (768GiB + local NVMe). 7-day
+`describe-spot-price-history` pull (261 points, all 3 AZs), not just latest
+tick:
+
+| Type | AZ 2a | AZ 2b | AZ 2c |
+|---|---|---|---|
+| c9g.metal-48xl (384GiB, ref only — too small alone) | $0.8317 flat | $0.8317 flat | $0.8317 flat |
+| **m9g.metal-48xl** (768GiB) | $1.13-$1.48 (med $1.31) | **$0.9393 flat** | **$0.9393 flat** |
+| m9gd.metal-48xl (768GiB+NVMe) | $1.24-$1.55 (med $1.40) | $1.2067 flat | $1.75-$2.27 (med $2.00) |
+
+vantage.sh's $1.0056/hr for m9g.metal-48xl looks like a stale/blended
+figure — real AWS data shows it's under $1/hr **only in AZ 2b/2c**, pricier
+and variable in 2a. m9gd (NVMe) is **never under $1/hr in any AZ** over this
+window — the NVMe sibling doesn't hit the target.
+
+Spot Placement Score (AWS's real queue-depth signal, 1-10, higher=better),
+single-AZ scores are per-AZ (order not guaranteed a/b/c) and regional spreads
+across all 3:
+
+| Type | tc=1 | tc=2 | tc=4 | tc=8 | Regional tc=1/2/4/8 |
+|---|---|---|---|---|---|
+| m9g.metal-48xl | 3,3,2 | 2,1,3 | 1,1,3 | 2,1,1 | 3,3,3,2 |
+| m9gd.metal-48xl | 2,3,2 | 1,2,1 | 1,1,1 | 1,1,1 | 3,3,2,1 |
+
+Both cap at 3/10 — genuinely thin spot capacity, not an artifact. Degrades
+further as target capacity rises, especially m9gd (drops to 1 by tc=4 even
+regionally).
+
+**Verdict:** `m9g.metal-48xl` is the real spot-medi G5 candidate — sub-$1/hr
+and flat in AZ 2b/2c, regional placement score holds at 3 through tc=4.
+`m9gd.metal-48xl` is worse on both axes (never <$1/hr, placement score drops
+to 1 at tc>=4) — its NVMe doesn't buy availability, and MEDI's page-cache
+warm-up doesn't strictly need instance-store (EBS-staged + warm-into-RAM
+works, just a slower initial copy). Neither pool is deep (capped at 3/10) —
+plan for interruption/retry at more than a couple concurrent nodes, and pin
+the CE's AZ preference toward 2b/2c to actually realize the ~$0.94/hr price
+(Batch doesn't let you exclude a single AZ directly, but subnet selection in
+`SubnetIds` can be scoped to 2b/2c-only subnets for this CE).
+
 **AMI check:** SSM param
 `/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id`
 resolves fine (`ami-01072f6f8844e1659`, modified 2026-08-07). No AWS docs
@@ -64,14 +106,17 @@ read-only — must smoke-test with a real launch**, not assume.
 | spot-metaphlan | x8g.8xl / 12xl (16GB/vCPU) | 32/512, 48/768 | none | — | gap, no high-mem G5 family; StrainPhlAn sample2markers under-provisioned in G5 CE |
 | spot-metaphlan | r8g.metal-24xl | 96/768GB | no clean fit | — | m9g.metal-48xl is 2x vCPU for same mem/vCPU ratio |
 | spot-humann | same c8g/m8g pools as above | | c9g/m9g equivalents | | same NVMe/mem-tier gaps |
-| spot-medi | r8gd.metal-24xl, i8g.*, r8gd.*, m8gd.metal-48xl (all NVMe, 768GB-1.5TB) | | **none** | — | full gap. Kraken hash needs instance-store + mem-resident 414GB; not buildable on G5 today. Leave on G4 or skip MEDI in this test. |
+| spot-medi | r8gd.metal-24xl, i8g.*, r8gd.*, m8gd.metal-48xl (all NVMe, 768GB-1.5TB) | | **m9g.metal-48xl** | 192/768GB, no NVMe | fit found (see dedicated section above) — sub-$1/hr in AZ 2b/2c, placement score 3/10 through tc=4. No 1.5TB-tier equivalent, so the r8g.metal-48xl-class headroom is still a gap; m9g.metal-48xl's 768GB must be enough for the 414GB hash + working memory. |
 
 ## Rollout steps (not yet executed)
 
 1. New branch: `graviton5-smoke` (this one).
 2. New parallel CEs/queues, cloned from existing launch templates (same
    UserData/boot logic): `spot-queue-g5`, `spot-metaphlan-g5`,
-   `spot-humann-g5`. No `spot-medi-g5` (no fit yet).
+   `spot-humann-g5`, `spot-medi-g5` (single type `m9g.metal-48xl`, no NVMe —
+   MEDI's boot script must EBS-stage the Kraken DB instead of instance-store,
+   then warm hash into page cache same as today; subnets scoped to AZ
+   2b/2c to realize the ~$0.94/hr price).
 3. `InstanceTypes` per new CE — all 10 base types confirmed live, plus
    `c9gd.24xlarge` and `m9gd.metal-48xl` (NVMe, confirmed live, vantage was
    wrong about these not existing). Lead with `c9g.metal-48xl` for
