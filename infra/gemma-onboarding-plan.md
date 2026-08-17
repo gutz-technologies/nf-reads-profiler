@@ -1,6 +1,33 @@
 # GEMMA onboarding plan — preprocessing, then a normal pipeline run
 
-Status: **plan only, nothing deployed or run** (written 2026-08-14).
+Status: written 2026-08-14 as a plan; **stage 1 is complete and `under8g` is
+essentially profiled** as of 2026-08-17. This document is a revision log — the
+sections below record the reasoning as it developed, including branches that
+were later abandoned. **Read the summary immediately below for what is actually
+true now**, then use the rest for the measurements and the rejected
+alternatives.
+
+## Where the design landed (2026-08-17) — read this first
+
+| question | answer | superseded |
+|---|---|---|
+| depth cap | **50M pairs, applied in stage 1** by proportional per-lane stride sampling | "no cap at all" (2026-08-14); "cap in fastp via `nreads`" (considered 2026-08-17, rejected) |
+| stage 2 `nreads` | `0` — profiles whatever stage 1 emitted | — |
+| batches | `under8g` / `over8g`, split on total sample bytes at 8×10⁹ | `under32m` / `over32m` |
+| dedup | one `fastp --dedup` on the merged pair, accuracy 3, both batches | per-batch `--fastp_dedup_accuracy 6` |
+| `GMA_353` | ordinary sample, capped to 50M pairs, runs inline | run alone afterwards at 24 h |
+| runtime model | linear fit on the finished `under8g` run itself | cosmosid-infant slope, extrapolated 21× |
+
+**Why the cap has to live in stage 1 and not in fastp** — this is the decision
+that shaped everything else. `fastp --reads_to_process` stops reading after N
+records: it is *head truncation*, not subsampling. On a merged multi-flowcell
+file that keeps the first lanes and silently drops the rest. Measured on the 12
+samples a 50M-pair cap actually binds on, **3 would lose a whole flowcell**
+(`GMA_353` 3→2, `GMA_338` 2→1, `GMA_226` 3→1), and even a single-lane sample
+would get a contiguous spatial slice of the flowcell rather than a sample of it.
+Stage 1 instead gives each lane a proportional share of the cap and takes that
+share by an even stride across the whole lane, so every flowcell and every
+region of every flowcell is represented at the same rate.
 
 GEMMA is the first cohort delivered as **multiple FASTQ pairs per biological
 sample** (flowcell × lane, sometimes across two sequencer generations). Every
@@ -347,7 +374,11 @@ Neither blocks the run; both are cheap to add later since they don't touch
 - 3 non-FASTQ objects sit in the source prefix (`Biografia.docx`, the transfer
   manifest, and one zero-length partial); the manifest ignores them.
 
-## Revision 2026-08-14 — the cap is gone
+## Revision 2026-08-14 — the cap is gone (SUPERSEDED by Revision 3)
+
+**Superseded 2026-08-17: a 50M-pair cap is back, applied in stage 1. Skip to
+*Revision 3* for the current design; this section explains why the original
+32M cap was dropped, which is still the reason the batches are size classes.**
 
 The depth cap was dropped after this document was written: the run profiles
 **every read of every sample** (`nreads = 0` in `conf/gemma.config`, stage 1 run
@@ -485,7 +516,129 @@ from above; CE settles a day's data 8–14 h after that day's own UTC
 midnight, so today's own spend is never visible same-day no matter how long
 you wait within it.
 
+## Revision 3 (2026-08-17) — a 50M-pair cap, applied upstream
+
+Approved: **50 million pairs per sample**, and it is enforced in **stage 1**,
+not in fastp. `conf/gemma.config` keeps `nreads = 0`; `preprocess_gemma.nf` runs
+with `--cap 50000000`.
+
+### Why cap again at all
+
+The uncapped plan carried `GMA_353` at 392M pairs — a predicted ~20 h of HUMAnN
+in a single task, a 24 h `resourceLimits` ceiling, and a >6 h spot job that one
+reclamation restarts from zero. 400M pairs is far more depth than the analysis
+needs. At 50M the deepest possible task is a predicted 2.6 h of HUMAnN
+(17.7 min MetaPhlAn), which fits one 6 h attempt with 2.3× headroom, and the
+24 h ceiling is gone.
+
+### Why not in fastp
+
+`fastp --reads_to_process` is head truncation. See *Where the design landed* at
+the top for the flowcell-loss measurement. The short version: capping in fastp
+would trade a depth problem for a batch-effect problem on exactly the samples
+that are most valuable.
+
+### What the cap actually touches
+
+| batch | samples | over 50M pairs | pairs before → after |
+|---|---:|---:|---|
+| `under8g` | 1252 | **0** (real max 45.1M) | 18.86 G → 18.86 G (no-op) |
+| `over8g` | 104 | 12 (byte-estimated) | 4.31 G → 3.77 G (−12.6%) |
+
+`under8g`'s max is a **real** readcount from the finished run (n=1252, median
+20.3M, p99 33.3M, max 45.1M pairs), not a byte estimate — so the finished
+`under8g` results are already cap-compliant and are not re-run.
+
+The 12 samples the cap binds on, and the share of each that survives:
+
+| sample | Mpairs | GB gz | flowcells | lanes | kept |
+|---|---:|---:|---:|---:|---:|
+| `GMA_353` | 395.8 | 111.6 | 3 | 6 | 12.6% |
+| `sGMA_454` | 83.3 | 23.5 | 1 | 2 | 60.0% |
+| `GMA_338` | 81.7 | 23.1 | 2 | 5 | 61.2% |
+| `GMA_1426` | 79.0 | 11.9 | 3 | 4 | 63.3% |
+| `GMA_1441` | 76.8 | 11.6 | 4 | 5 | 65.1% |
+| `GMA_Sal_6_TST` | 73.5 | 20.7 | 1 | 1 | 68.1% |
+| `GMA_226` | 65.5 | 18.5 | 3 | 5 | 76.3% |
+| `GMA_913` | 61.0 | 17.2 | 1 | 4 | 81.9% |
+| `GMA_1459` | 59.6 | 9.0 | 3 | 4 | 83.8% |
+| `GMA_1470` | 56.4 | 8.5 | 4 | 5 | 88.7% |
+| `GMA_1123` | 54.9 | 15.5 | 3 | 4 | 91.1% |
+| `GMA_1127` | 54.4 | 15.3 | 3 | 4 | 91.9% |
+
+286 GB of gz — **4.7% of the cohort** — has to be re-processed. Everything else
+already on S3 stays exactly as it is.
+
+### How stage 1 takes the sample
+
+`preprocess_gemma.nf` already had the proportional path; it had never run in
+production (every summary row from the 2026-08-15 full-cohort run says `cat`).
+Two things changed:
+
+1. **`bin/gemma_take_pairs.py` gained a systematic mode.** Given `--records k`
+   and `--total n` for a lane, it emits record *i* when a Bresenham accumulator
+   (`acc += k`, emit and `acc -= n` when `acc >= n`) crosses — an even stride
+   over the entire lane instead of a prefix. Selection depends only on the
+   record number, so R1 and R2 pick **identical record indices** and positional
+   pairing survives. Head mode (no `--total`) is retained for the smoke slice.
+   The cost is decompressing the whole lane, which is why this is worth doing
+   only for the few samples over the cap.
+2. **The skip check learned provenance.** `--skip_existing` used to compare only
+   object size, which cannot distinguish "built under a different cap" from
+   "built correctly" (`GMA_1127`'s uncapped object is just 9% larger than its
+   capped one). The per-sample log now carries a `plan_mode` column, and the
+   check reads the *published* log back: `cat`-mode output is byte-identical
+   under any cap, so it needs only the size check (now two-sided); proportional
+   output additionally has to match the previous run's plan. Effect: **re-running
+   the whole cohort at the new cap redoes exactly the 12 samples and skips the
+   other 1344.**
+
+Verified offline against a fake-S3 shim (3 samples, 5 lanes, 2 flowcells):
+exact cap hit, both flowcells represented at equal rate, R1/R2 selecting the
+same reads, and the skip check behaving correctly across four cap transitions
+(same cap → skip all; tighter cap → rebuild the bound samples; cap 0 → rebuild
+as `cat`; back to the cap → rebuild proportional).
+
+Throughput measured at ~1 M records/s for the sampler on top of gzip inflate,
+so `GMA_353` (392M pairs × 2 reads) is a ~2 h task. `conf/aws_batch.config`
+gained a `withName: 'GEMMA_MERGE_LANES'` block (cpus 4, 4 GB, `4.h × attempt`)
+— the previous 1 h default would have killed it.
+
+### Why dedup still is not done per lane
+
+The question came up as "derep each lane, then sample each of those". No:
+GEMMA's extra flowcells are **re-sequencing of the same library**, so the
+duplicates that matter are cross-flowcell and a per-lane dedup cannot see them.
+It would also force stage 1 to decompress and recompress all 5.55 TiB rather
+than 4.7% of it. Dedup stays in `clean_reads`, on the merged pair, **after**
+sampling. Cost of that ordering: the ~4% of the 50M that turns out to be
+duplicate. Measured duplication on the finished `under8g` run is **3.8–6.1%**
+(fastp, n=3 — the only samples in that run's MultiQC general-stats table, so
+treat it as indicative rather than a cohort estimate), with 94–96% of reads
+surviving fastp overall.
+
+### Config consequences
+
+`conf/gemma.config` keeps `nreads = 0` but was re-tuned for a world where
+nothing exceeds 50M pairs:
+
+- `profile_function` `time` → flat `6.h` (was `attempt==1 ? 6.h : 24.h`)
+- `profile_taxa` `time` → `1.h × attempt` (was `3.h × attempt`)
+- `resourceLimits.time` → `6.h` (was `24.h`); `cpus` stays 32
+- `--fastp_dedup_accuracy 6` for `over8g` dropped — accuracy 3 for both batches,
+  no per-batch command-line flags at all
+- `count_reads` now measures capped depth, so `readcount/` and the profiled
+  depth agree again (under the fastp-cap alternative they would not have)
+
+`cpus` 16 → 32 on `profile_taxa`/`profile_function` is unchanged and unrelated
+to the cap: both tools burst to 2× their requested cpus internally, so
+requesting 16 let Batch's bin-packer believe 2 jobs fit a `c8g.12xlarge`
+(48 vCPU) when real thread usage is 64. `resourceLimits.cpus` is 32 to match,
+or the requests would be clamped back to `aws_batch.config`'s 24.
+
 ## `over8g` production plan — updated 2026-08-17
+
+
 
 Full details and the finalized decisions are in the canonical playbook,
 `s3://gutz-nf-reads-profilers-runs/playbooks/gemma.md` (`## Decisions
@@ -497,9 +650,9 @@ Full details and the finalized decisions are in the canonical playbook,
   error against actual `under8g` runtimes). Scripts:
   `bin/gemma_join_readcount_runtime.py`, `bin/gemma_runtime_vs_readcount.R`,
   `bin/gemma_predict_runtime.py`.
-- **`GMA_353`** (396M pairs, 4.7× the next-largest sample in either cohort)
-  predicts to 2.1 h `profile_taxa` / 20.1 h `profile_function` — now run
-  **inline** in the normal `over8g` batch, not separately afterwards.
+- **`GMA_353`** (396M pairs, 4.7× the next-largest sample in either cohort) is
+  capped to 50M pairs by stage 1, so it predicts to 17.7 min `profile_taxa` /
+  2.6 h `profile_function` and runs **inline** in the normal `over8g` batch.
   `bin/build_gemma_samplesheet.py` gained `--sort-by-readcount`;
   `gemma-over8g.csv` was regenerated with `GMA_353` sorted to row 1 so it
   starts immediately rather than becoming the tail straggler.
@@ -509,11 +662,11 @@ Full details and the finalized decisions are in the canonical playbook,
   bin-packer under-count real host thread usage (documented oversubscription
   on `c8g.12xlarge`: 2 jobs × 32 real threads = 64 > 48 vCPUs). Requesting
   the true 32 fixes Batch's own accounting.
-- **`profile_function` time ladder** simplified to `{ attempt==1 ? 6.h :
-  24.h }` (was `6.h * attempt`, i.e. 6/12/18/24h) — only `GMA_353` needs
-  above 6h, so jump straight to the ceiling on retry instead of burning a
-  guaranteed-insufficient 12h/18h attempt first. `resourceLimits.cpus`
-  raised 24 → 32 to match the new per-process cpu request.
-- All config changes synced to the FUSE/S3-backed
-  `conf/gemma.config` and validated with `nextflow run main.nf -c
-  conf/gemma.config --help` (exit 0). `over8g` has not been launched yet.
+- **`profile_function` time** is a flat `6.h` and `resourceLimits.time` is back
+  to `6.h`: with stage 1 capping at 50M pairs, nothing needs the 24 h ceiling.
+  `resourceLimits.cpus` raised 24 → 32 to match the per-process cpu request.
+- All config changes synced to the FUSE/S3-backed `conf/gemma.config` and
+  validated with `nextflow -C conf/gemma.config config` (exit 0, directives
+  resolve as intended). **Blocker before launching `over8g`: stage 1 has to be
+  re-run at `--cap 50000000`** so the 12 over-cap samples are resampled — see
+  *Revision 3*. `over8g` has not been launched yet.
