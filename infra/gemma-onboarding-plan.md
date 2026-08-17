@@ -1,7 +1,8 @@
 # GEMMA onboarding plan — preprocessing, then a normal pipeline run
 
-Status: written 2026-08-14 as a plan; **stage 1 is complete and `under8g` is
-essentially profiled** as of 2026-08-17. This document is a revision log — the
+Status: written 2026-08-14 as a plan; as of 2026-08-17 **stage 1 is complete at
+the 50M cap, `under8g` has finished, and `over8g` is running** — see *Revision 4*
+for what the execution actually showed. This document is a revision log — the
 sections below record the reasoning as it developed, including branches that
 were later abandoned. **Read the summary immediately below for what is actually
 true now**, then use the rest for the measurements and the rejected
@@ -667,6 +668,83 @@ Full details and the finalized decisions are in the canonical playbook,
   `resourceLimits.cpus` raised 24 → 32 to match the per-process cpu request.
 - All config changes synced to the FUSE/S3-backed `conf/gemma.config` and
   validated with `nextflow -C conf/gemma.config config` (exit 0, directives
-  resolve as intended). **Blocker before launching `over8g`: stage 1 has to be
-  re-run at `--cap 50000000`** so the 12 over-cap samples are resampled — see
-  *Revision 3*. `over8g` has not been launched yet.
+  resolve as intended). The stage-1 re-run that this blocked on has since been
+  done — see *Revision 4*.
+
+## Revision 4 (2026-08-17) — execution: what the run actually showed
+
+The plan above is now executed. Three things it did not predict.
+
+### The stage-1 re-run was 4× faster than modelled, and the cap held exactly
+
+`preprocess_gemma.nf --cap 50000000` over the whole `over8g` manifest:
+**35 min wall** (22:00–22:31), `completed=104 failed=0 cached=0`, **12 rebuilt
+proportionally, 92 skipped** by the provenance check exactly as designed.
+`GMA_353` — 111.6 GB gz in, projected ~2 h — finished inside that window. Output
+is 208 objects / 977.8 GiB.
+
+**The sampler is exact where its inputs are exact.** 8 of the 12 hit their
+planned pair count to the record. The four that fell short did so because `k_i`
+comes from the manifest's byte-estimated `est_pairs`, and a lane estimated
+larger than it really is simply runs out of records mid-stride:
+
+| sample | planned | observed | delta |
+|---|---:|---:|---:|
+| `GMA_1441` | 50,000,001 | 48,772,710 | **−2.46%** |
+| `GMA_1459` | 50,000,000 | 49,985,494 | −0.03% |
+| `GMA_1426` | 50,000,001 | 49,991,346 | −0.02% |
+| `GMA_338` | 50,000,000 | 49,997,014 | −0.01% |
+| other 8 | — | exact | 0.000% |
+
+`GMA_1441`'s lane `DL100014296_L01_UDB-278` was estimated at 71.86M pairs and
+holds ~46.9M — a −35% miss on one lane, i.e. well outside the ±4% the byte
+constants are good for in aggregate. Since R1 and R2 select by *record index*
+off the same lane, a short lane truncates both identically and pairing is
+untouched. This is worth knowing but not worth fixing: the deficit is 1.2M pairs
+out of 50M.
+
+### `quantify` OOMs at cohort scale — MEDI's one reduce that isn't streaming
+
+`under8g` finished cleanly (2026-08-17 22:15, succeeded 22 / cached 20 /
+failed 14 / ignored 4) with every HUMAnN biom published, including the 6.7 GiB
+stratified and 5.1 GiB unstratified genefamilies. But `MEDI_QUANT:quantify` was
+OOM-killed (exit 137) on all four attempts, so `food_abundance.csv`,
+`food_content.csv` and `combined_bioms/medi/` are missing.
+
+`quantify` collects **every** lineage-annotated counts table (D+G+S) for the
+study and runs `quantify.R` over the lot, so its memory scales with cohort size
+while its siblings (`merge_taxonomy`, `add_lineage`) stream. It had never been
+given a `memory` directive, so it inherited the 4 GB `process` default — which
+had been survivable only because every prior cohort was small.
+
+Sizing it exposed a **trace-reading trap worth remembering**: across every
+successful `quantify` on record (gemma-smoke 0.51 MB input, cosmosid-infant
+3month 29.5 MB, 1year 59.7 MB) `peak_rss` reads a flat ~0.68 GB — a 120× input
+range with no signal — while `peak_vmem` sits at 8.1–10.1 GB, already over the
+4 GB limit even on the smallest. The task runs ~20 s, shorter than the trace
+sampler resolves, so its `peak_rss` never sees the spike. `under8g`'s D+G+S
+input is 133.1 MB, 2.2× the largest success, hence 10.1 × 2.2 ≈ 22 → **24 GB,
+48 GB on retry** in `conf/aws_batch.config`. Recovery is a `-resume` of the
+batch: kraken/bracken stay cached and only quantify plus the biom conversion
+re-run.
+
+`MEDI_QUANT:kraken` hit the same 4 GB default on `GMA_383_neb_01`,
+`GMA_383_v_neb_01` and `GMA_448_neb_01` (exit 137 both attempts, then ignored).
+Left alone deliberately — raising it reserves more per job on the spot-medi node
+and reduces packing, so it wants a measured decision, not a reflex bump.
+
+### `-resume` is wrong on a first launch
+
+`over8g` launched 2026-08-17 22:52 **without** `-resume`. With no session id the
+flag attaches to the last session in `.nextflow/history`, which after a stage-1
+run is `preprocess_gemma.nf` — a different script, so no task hash matches and
+the flag buys nothing. Harmless but misleading; the playbook's Stage 2 block now
+says so.
+
+Ten minutes in: 213 tasks COMPLETED (all `exit: 0`), 65 RUNNING, 5 SUBMITTED,
+zero failures, fleet 6 × `m8g.metal-24xl` + 1 × `c8g.12xlarge` at $5.64/h.
+
+**One counting caveat:** a grep for `ERROR|FAILED` over `.nextflow.log` matches
+the `error: -` field present on *every* ordinary task line — 289 hits on a run
+with no failures at all. Filter on `exit:` values or read `WorkflowStats`
+instead.
