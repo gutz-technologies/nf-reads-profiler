@@ -91,11 +91,31 @@ def pair_samples(objects, batch):
     return pairs, unmatched
 
 
-def build_rows(pairs, batch):
-    """Return (rows, missing_mate) where rows are complete R1+R2 samples."""
+def load_read_counts(summary_path):
+    """sample_id -> est_read_pairs, from gemma_sample_summary.tsv."""
+    counts = {}
+    with open(summary_path, newline="") as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            counts[row["sample_id"]] = int(row["est_read_pairs"])
+    return counts
+
+
+def build_rows(pairs, batch, read_counts=None):
+    """Return (rows, missing_mate) where rows are complete R1+R2 samples.
+
+    With `read_counts`, rows are ordered LARGEST-first by est_read_pairs
+    instead of alphabetically -- submits the longest-running samples first
+    so they run in parallel with everything else instead of becoming the
+    tail straggler. Samples missing from `read_counts` sort last (treated
+    as 0 pairs), alphabetically among themselves.
+    """
     rows = []
     missing_mate = []
-    for sample in sorted(pairs):
+    if read_counts is not None:
+        sample_order = sorted(pairs, key=lambda s: (-read_counts.get(s, 0), s))
+    else:
+        sample_order = sorted(pairs)
+    for sample in sample_order:
         mates = pairs[sample]
         has_r1 = "1" in mates
         has_r2 = "2" in mates
@@ -121,6 +141,10 @@ def main():
                      help="GEMMA batch to build a samplesheet for")
     ap.add_argument("--out", required=True,
                      help="local path to write the samplesheet CSV")
+    ap.add_argument("--sort-by-readcount",
+                     help="path to gemma_sample_summary.tsv (est_read_pairs column) -- "
+                          "sort rows largest-first instead of alphabetically, so the "
+                          "longest jobs (e.g. GMA_353) submit first, not last")
     args = ap.parse_args()
 
     s3_prefix = f"s3://{BUCKET}/{PREFIX_TMPL.format(batch=args.batch)}"
@@ -133,8 +157,9 @@ def main():
               "any output yet -- nothing to build. Not writing a samplesheet.")
         sys.exit(0)
 
+    read_counts = load_read_counts(args.sort_by_readcount) if args.sort_by_readcount else None
     pairs, unmatched = pair_samples(objects, args.batch)
-    rows, missing_mate = build_rows(pairs, args.batch)
+    rows, missing_mate = build_rows(pairs, args.batch, read_counts=read_counts)
 
     with open(args.out, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["sample", "fastq_1", "fastq_2", "study_accession"])
