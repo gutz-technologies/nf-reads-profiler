@@ -86,9 +86,12 @@ All compute is **Graviton (ARM64)** — runner and workers both. Four job queues
   no Packer rebuild). `MaxvCPUsMetaphlan=200` (bumped from 100, 2026-06-23) — a
   single 192-vCPU VM (or two 96-vCPU VMs) can launch, but not a second 192-vCPU
   box (384 > 200), so the 192-vCPU pools in its `InstanceTypes` are now live.
-- `spot-humann` — `profile_function` only. Spot-only, single CE, thin AMI that
-  syncs the HUMAnN DB set (~65 GiB) from S3 at boot. `MaxvCPUsHumann=960`
-  (~60 concurrent jobs).
+- `spot-humann` — `profile_function`, plus `combine_humann_tables` and
+  `convert_tables_to_biom` (routed here 2026-08-17: both scale memory past
+  what spot-queue's small instance types can ever schedule — see
+  `conf/aws_batch.config`). Spot-only, single CE, thin AMI that syncs the
+  HUMAnN DB set (~65 GiB) from S3 at boot. `MaxvCPUsHumann=960` (~60
+  concurrent jobs).
 - `spot-medi` — MEDI subworkflow. Spot-only, single CE, thin AMI. The
   per-database-queue pattern is documented in `infra/multiqueue-design.md`.
 
