@@ -439,3 +439,81 @@ strings carry 3.7–3.9 bits/base with no symbol above 19%, while DL100's carry
 0.5–0.9 bits with one symbol at 91–95%: the qual stream is half the raw bytes
 and it nearly vanishes under gzip on DL100. DL100 read names also come in two
 lengths (33 vs 55 B), which is part of why its per-file spread is 3× V350's.
+
+## `under8g` production run — status and cost (2026-08-17)
+
+Full pipeline (taxa + function + MEDI, StrainPhlAn off) launched on the 1252
+`under8g` samples. Ran into a stuck `combine_humann_tables` task
+(`spot-queue`'s CE tops out at `m8g/c8g.4xlarge`, ~64 GB — the job's own
+memory ladder retries up to 90 GB, which can never schedule there:
+`MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`). Same ceiling problem existed for
+`convert_tables_to_biom` (scales to 180 GB). Fixed by routing both to
+`spot-humann` (`conf/aws_batch.config`), whose CE has metal instances with
+headroom; `CLAUDE.md`'s queue table updated to match.
+
+Cancelled the stuck run cleanly with `Ctrl-C` into the `screen` session
+(`screen -S nf-gemma-under8g -X stuff $'\003'`) rather than killing the
+process — Nextflow's SIGINT handler terminates in-flight Batch jobs itself,
+flushes the report/trace, and writes a normal `Execution complete -- Goodbye`
+to `.nextflow.log`. Since AWS runs put `.nextflow.log` on S3 workDir (no local
+`tail -f`), this is the only way to get a complete, readable log instead of an
+abrupt cutoff. Documented in `README.md` under `screen` basics.
+
+**Sample count** (from `.nextflow.log*`, `status: COMPLETED` events, before
+the cancel): samplesheet has 1252 rows; `count_reads` completed for all 1252;
+`profile_taxa` (taxonomic profiling) completed for 1245 — the other 7 are
+`minreads`-floor drops or in-flight retries, not hard failures.
+
+**Cost** (`infra/get_aws_batch_spend.py`, Cost Explorer, us-east-2): run
+started 2026-08-15 06:32. CE data lags 8–14 h, so only 2026-08-15 and
+2026-08-16 are settled as of this writing — 2026-08-17 (the day of the stuck
+job / cancel / relaunch) isn't billed yet.
+
+| Date | VM (spot+on-demand) | EBS/other | Pre-run baseline subtracted |
+|---|---:|---:|---:|
+| 2026-08-15 | $104.59 | $17.24 | VM −$14.54/day, EBS −$3.08/day |
+| 2026-08-16 | $124.49 | $17.63 | (baseline = 2026-08-14, no run activity) |
+
+Run-attributable compute (2 days only): $200.00 VM + $28.71 EBS = **$228.71**.
+
+**$/sample so far: ~$0.183** ($228.71 ÷ 1245 completed taxa profiles) —
+**partial**, missing a full day (2026-08-17) of compute. Re-run
+`infra/get_aws_batch_spend.py` after 2026-08-18 to get the settled Aug-17
+figure and a true final $/sample once the run completes. Checked again on
+2026-08-17 (same day) — CE still only has 08-15/08-16 settled, unchanged
+from above; CE settles a day's data 8–14 h after that day's own UTC
+midnight, so today's own spend is never visible same-day no matter how long
+you wait within it.
+
+## `over8g` production plan — updated 2026-08-17
+
+Full details and the finalized decisions are in the canonical playbook,
+`s3://gutz-nf-reads-profilers-runs/playbooks/gemma.md` (`## Decisions
+(2026-08-17)`, `### How long the deep samples take`) — summary:
+
+- **Runtime model**: replaced the cosmosid-infant extrapolation (21× past its
+  fitted range) with a linear regression fit directly on the completed
+  `under8g` run's own readcount × trace data (R² 0.95/0.96, <7–9% mean abs
+  error against actual `under8g` runtimes). Scripts:
+  `bin/gemma_join_readcount_runtime.py`, `bin/gemma_runtime_vs_readcount.R`,
+  `bin/gemma_predict_runtime.py`.
+- **`GMA_353`** (396M pairs, 4.7× the next-largest sample in either cohort)
+  predicts to 2.1 h `profile_taxa` / 20.1 h `profile_function` — now run
+  **inline** in the normal `over8g` batch, not separately afterwards.
+  `bin/build_gemma_samplesheet.py` gained `--sort-by-readcount`;
+  `gemma-over8g.csv` was regenerated with `GMA_353` sorted to row 1 so it
+  starts immediately rather than becoming the tail straggler.
+- **`cpus` 16 → 32** for `profile_taxa`/`profile_function` in
+  `conf/gemma.config` — both tools burst to 2× their requested cpus
+  internally (measured), so the old request of 16 let AWS Batch's
+  bin-packer under-count real host thread usage (documented oversubscription
+  on `c8g.12xlarge`: 2 jobs × 32 real threads = 64 > 48 vCPUs). Requesting
+  the true 32 fixes Batch's own accounting.
+- **`profile_function` time ladder** simplified to `{ attempt==1 ? 6.h :
+  24.h }` (was `6.h * attempt`, i.e. 6/12/18/24h) — only `GMA_353` needs
+  above 6h, so jump straight to the ceiling on retry instead of burning a
+  guaranteed-insufficient 12h/18h attempt first. `resourceLimits.cpus`
+  raised 24 → 32 to match the new per-process cpu request.
+- All config changes synced to the FUSE/S3-backed
+  `conf/gemma.config` and validated with `nextflow run main.nf -c
+  conf/gemma.config --help` (exit 0). `over8g` has not been launched yet.

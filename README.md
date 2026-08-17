@@ -62,6 +62,18 @@ nextflow run main.nf -profile test_medi -resume
 `screen` basics: detach with `Ctrl+A D`, reattach with `screen -r <name>`, list
 with `screen -ls`.
 
+**Cancelling a run cleanly:** send Ctrl-C into the screen session running
+Nextflow (e.g. `screen -S <name> -X stuff $'\003'`) instead of killing the
+process or the screen session. Nextflow's SIGINT handler does a graceful
+abort: it terminates any in-flight AWS Batch jobs itself (no manual
+`aws batch terminate-job` needed), flushes the execution report/trace, and
+writes `Execution complete -- Goodbye` to `.nextflow.log` — the same clean
+exit as a normal finish. Since `.nextflow.log` lives on S3 workDir for AWS
+runs (no local tail -f), this is the only way to get a legible, complete log
+instead of an abrupt cutoff. Verified 2026-08-17 on the gemma under8g run
+(stuck on an unschedulable `combine_humann_tables` job): SIGINT → job
+terminated → report saved → clean Goodbye, all within ~5s.
+
 ### Profiles
 
 Profile-to-config mapping (`nextflow.config`):
