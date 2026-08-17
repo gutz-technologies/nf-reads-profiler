@@ -74,20 +74,43 @@ def main():
     for mid, cpu in result:
         cpu_map[mid] = float(cpu) if cpu is not None else None
 
+    # Current spot price per type (latest history entry, any AZ in region)
+    spot_data = aws(
+        "ec2", "describe-spot-price-history",
+        "--instance-types", *types,
+        "--product-descriptions", "Linux/UNIX",
+        "--start-time", now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--query", "SpotPriceHistory[*].[InstanceType,SpotPrice,Timestamp]",
+        "--output", "json",
+    )
+    price_map = {}
+    for itype, price, ts in spot_data:
+        if itype not in price_map or ts > price_map[itype][1]:
+            price_map[itype] = (float(price), ts)
+
     rows = []
+    total_cost = 0.0
     for mid, (iid, itype) in id_map.items():
         vcpu, ram = type_info.get(itype, ("?", "?"))
         cpu = cpu_map.get(mid)
         cpu_str = f"{cpu:.1f}%" if cpu is not None else "N/A"
-        rows.append([iid, itype, str(vcpu), str(ram), cpu_str])
+        price = price_map.get(itype, (None, None))[0]
+        price_str = f"${price:.3f}" if price is not None else "N/A"
+        if price is not None:
+            total_cost += price
+        rows.append([iid, itype, str(vcpu), str(ram), cpu_str, price_str])
 
-    headers = ["Instance ID", "Type", "vCPUs", "RAM (GB)", "CPU %"]
+    headers = ["Instance ID", "Type", "vCPUs", "RAM (GB)", "CPU %", "$/h"]
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*headers))
     print("  ".join("-" * w for w in widths))
     for row in rows:
         print(fmt.format(*row))
+    print("  ".join("-" * w for w in widths))
+    total_row = [""] * (len(headers) - 1) + [f"${total_cost:.3f}"]
+    total_row[0] = "TOTAL"
+    print(fmt.format(*total_row))
 
 
 if __name__ == "__main__":
