@@ -108,6 +108,57 @@ read-only — must smoke-test with a real launch**, not assume.
 | spot-humann | same c8g/m8g pools as above | | c9g/m9g equivalents | | same NVMe/mem-tier gaps |
 | spot-medi | r8gd.metal-24xl, i8g.*, r8gd.*, m8gd.metal-48xl (all NVMe, 768GB-1.5TB) | | **m9g.metal-48xl** | 192/768GB, no NVMe | fit found (see dedicated section above) — sub-$1/hr in AZ 2b/2c, placement score 3/10 through tc=4. No 1.5TB-tier equivalent, so the r8g.metal-48xl-class headroom is still a gap; m9g.metal-48xl's 768GB must be enough for the 414GB hash + working memory. |
 
+## Field evidence from the G4 spot-humann CE (2026-08-18, gemma over8g run)
+
+Measured live during the GEMMA over8g stage-2 run, on the existing G4
+`spot-humann` CE (`SPOT_PRICE_CAPACITY_OPTIMIZED`, `MaxvCPUsHumann=960`).
+Two findings that should shape the G5 `InstanceTypes` lists.
+
+**1. Only `m8g.metal-24xl` had both a >=4 GiB/vCPU ratio and real spot depth.**
+The CE stalled at 480 of 960 `desiredvCpus` and placed nothing but
+`m8g.metal-24xl` (5 instances, spread 2a/2b/2c). Spot placement score at
+target capacity 480 vCPU, single-AZ:
+
+| instance | GiB/vCPU | use2-az1 | use2-az2 | use2-az3 |
+|---|---:|---:|---:|---:|
+| `m8g.metal-24xl` | 4 | 1 | 3 | 3 |
+| `m8gd.metal-48xl` | 4 | 1 | 1 | 1 |
+| `r8g.metal-48xl` | 8 | 1 | 1 | 1 |
+| `c8g.metal-48xl` | 2 | 1 | 3 | 1 |
+
+`m8gd.metal-48xl` is score 1 everywhere *and* 2.05x the $/vCPU of
+`m8g.metal-24xl` ($0.00922 vs $0.00449, cheapest-AZ spot), so
+price-capacity-optimized correctly skipped it — it was not a viable second
+pool. On the G5 side the same shape is likely: a list that leans on one
+`m9g` type for the 4 GiB/vCPU tier has a single point of capacity failure.
+Give each G5 queue at least two viable pools at the *actual* ratio it needs,
+and check placement scores at the CE's real target capacity, not at tc=1.
+
+**2. The 4 GiB/vCPU requirement is probably wrong — CPU is the binding
+constraint, not memory.** ECS `describe-container-instances` on every humann
+node: 3 running tasks, **CPU remaining 0**, memory remaining 263,132 of
+386,012 MiB registered. Per task that is 32 vCPU and 40,960 MiB = **1.25
+GiB/vCPU**. (`conf/aws_batch.config` declares `cpus = 16` / `memory = 25.GB`
+attempt-1, 40.GB on retry, and the job def lands at 32 vCPU — the "x2
+internally" note on that block.) So ~2/3 of each node's RAM sat idle while
+the pool was CPU-starved.
+
+At 1.25 GiB/vCPU the cheap 2 GiB/vCPU `c8g.*` pools clear the requirement
+with room to spare — `c8g.metal-48xl` is both cheaper per vCPU ($0.00397 vs
+$0.00449) and has depth (score 3 in use2-az3), and fits 6 x 32-vCPU tasks in
+240 of its 384 GB. The G5 analogue `c9g.metal-48xl` is already flagged above
+as best $/vCPU (0.0043). **Verify the real per-task ratio before writing the
+G5 `InstanceTypes` lists** — sizing the humann CE off the declared memory
+ladder rather than observed usage is what narrowed it to one pool.
+
+Caveat: this is one run's snapshot. The 40 GB observed matches the *retry*
+rung, so some of those tasks may be attempt 2; re-measure on a clean run
+before treating 1.25 GiB/vCPU as the design number.
+
+Changing `InstanceTypes` on an existing CE **replaces it and kills in-flight
+jobs** (see CLAUDE.md) — so any correction here lands on the new G5 CEs at
+creation, or on the G4 CEs only between runs.
+
 ## Rollout steps (not yet executed)
 
 1. New branch: `graviton5-smoke` (this one).
