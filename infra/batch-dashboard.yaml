@@ -366,16 +366,16 @@ Resources:
             "widgets": [
               {
                 "type": "metric",
-                "x": 0, "y": 0, "width": 8, "height": 6,
+                "x": 0, "y": 0, "width": 6, "height": 6,
                 "properties": {
-                  "title": "Job Status — spot-queue (glue)",
+                  "title": "tiny spot",
                   "metrics": [
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${SpotQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
                     ["AWS/Batch", "FailedJobCount",    "JobQueue", "${SpotQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#17becf", "label": "Running"}]
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#ff7f0e", "label": "Pending",  "stat": "Maximum"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#1f77b4", "label": "Runnable", "stat": "Maximum"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${SpotQueueArn}", {"color": "#9467bd", "label": "Starting", "stat": "Maximum"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${SpotQueueArn}", {"color": "#17becf", "label": "Running",  "stat": "Maximum"}]
                   ],
                   "period": 300,
                   "stat": "Sum",
@@ -385,16 +385,16 @@ Resources:
               },
               {
                 "type": "metric",
-                "x": 8, "y": 0, "width": 8, "height": 6,
+                "x": 6, "y": 0, "width": 6, "height": 6,
                 "properties": {
-                  "title": "Job Status — spot-metaphlan (profile_taxa + StrainPhlAn)",
+                  "title": "spot-metaphlan (profile_taxa + StrainPhlAn)",
                   "metrics": [
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MetaphlanQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
                     ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MetaphlanQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#17becf", "label": "Running"}]
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#ff7f0e", "label": "Pending",  "stat": "Maximum"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#1f77b4", "label": "Runnable", "stat": "Maximum"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MetaphlanQueueArn}", {"color": "#9467bd", "label": "Starting", "stat": "Maximum"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MetaphlanQueueArn}", {"color": "#17becf", "label": "Running",  "stat": "Maximum"}]
                   ],
                   "period": 300,
                   "stat": "Sum",
@@ -404,16 +404,16 @@ Resources:
               },
               {
                 "type": "metric",
-                "x": 16, "y": 0, "width": 8, "height": 6,
+                "x": 12, "y": 0, "width": 6, "height": 6,
                 "properties": {
-                  "title": "Job Status — spot-humann (profile_function)",
+                  "title": "spot-humann (profile_function)",
                   "metrics": [
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${HumannQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
                     ["AWS/Batch", "FailedJobCount",    "JobQueue", "${HumannQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#17becf", "label": "Running"}]
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#ff7f0e", "label": "Pending",  "stat": "Maximum"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#1f77b4", "label": "Runnable", "stat": "Maximum"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${HumannQueueArn}", {"color": "#9467bd", "label": "Starting", "stat": "Maximum"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${HumannQueueArn}", {"color": "#17becf", "label": "Running",  "stat": "Maximum"}]
                   ],
                   "period": 300,
                   "stat": "Sum",
@@ -423,16 +423,16 @@ Resources:
               },
               {
                 "type": "metric",
-                "x": 0, "y": 12, "width": 8, "height": 6,
+                "x": 18, "y": 0, "width": 6, "height": 6,
                 "properties": {
-                  "title": "Job Status — spot-medi (MEDI_QUANT)",
+                  "title": "spot-medi (MEDI_QUANT)",
                   "metrics": [
                     ["AWS/Batch", "SucceededJobCount", "JobQueue", "${MediQueueArn}", {"color": "#2ca02c", "label": "Succeeded"}],
                     ["AWS/Batch", "FailedJobCount",    "JobQueue", "${MediQueueArn}", {"color": "#d62728", "label": "Failed"}],
-                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#ff7f0e", "label": "Pending"}],
-                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#1f77b4", "label": "Runnable"}],
-                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#9467bd", "label": "Starting"}],
-                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#17becf", "label": "Running"}]
+                    ["AWS/Batch", "PendingJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#ff7f0e", "label": "Pending",  "stat": "Maximum"}],
+                    ["AWS/Batch", "RunnableJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#1f77b4", "label": "Runnable", "stat": "Maximum"}],
+                    ["AWS/Batch", "StartingJobCount",  "JobQueue", "${MediQueueArn}", {"color": "#9467bd", "label": "Starting", "stat": "Maximum"}],
+                    ["AWS/Batch", "RunningJobCount",   "JobQueue", "${MediQueueArn}", {"color": "#17becf", "label": "Running",  "stat": "Maximum"}]
                   ],
                   "period": 300,
                   "stat": "Sum",
@@ -442,7 +442,7 @@ Resources:
               },
               {
                 "type": "alarm",
-                "x": 0, "y": 6, "width": 8, "height": 6,
+                "x": 0, "y": 6, "width": 6, "height": 6,
                 "properties": {
                   "title": "Active Alarms",
                   "alarms": [
@@ -453,7 +453,7 @@ Resources:
               },
               {
                 "type": "metric",
-                "x": 8, "y": 6, "width": 16, "height": 6,
+                "x": 6, "y": 6, "width": 15, "height": 6,
                 "properties": {
                   "title": "Succeeded / Failed — all queues (hourly)",
                   "metrics": [
