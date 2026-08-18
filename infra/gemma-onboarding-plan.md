@@ -797,59 +797,72 @@ to `8 GB` attempt 1, `16 GB` attempt 2 — cheap (kraken tasks run 1–2 min,
 spot-medi nodes have hundreds of GB free) and matches the existing
 2-attempt retry ladder. Applied in `bd96c74`.
 
-### The plan: one merged `-resume` run, not two separate ones
+### The merged-run plan was reviewed and rejected: `-resume` is per-session, not per-workDir
 
-`under8g`'s missing MEDI outputs and `over8g`'s 4 failures are both just
-`-resume` away — and since they went through separate `nextflow run`
-invocations for no reason other than being launched at different times, they
-can be recovered in a single one:
+The first draft of this section proposed one merged samplesheet (both
+batches concatenated) through a single `-resume` invocation, on the theory
+that Nextflow's skip-check is a workDir hash lookup independent of which
+session created it. An independent review (Opus, read-only) checked that
+claim against the actual mechanism and this host's `.nextflow/history`, and
+found it **wrong**: `TaskProcessor.checkCachedOutput` looks up the task hash
+in `session.cache.getTaskEntry(hash)` — a **per-session LevelDB** at
+`.nextflow/cache/<session-uuid>/db`. A missing entry in *that* session's DB
+is a cache miss even if `workDir/<hash>/` on S3 is complete and valid. Resume
+attaches to exactly one session UUID — by default, the most recent one in
+`.nextflow/history`.
 
-- **Cache is shared, not per-run.** Both batches use the same S3 workDir
-  (`gutz-nf-reads-profilers-workdir`) and the same local `.nextflow/cache`
-  (127 accumulated session dirs on this host). Nextflow's resume skip-check
-  is a workDir hash lookup — does `work/<hash>/` already hold a successful
-  exit marker — not scoped to the session that created it. The docs call
-  this out explicitly as working "also in disjoint pipeline executions."
-  Failed tasks are never cached, so `-resume` retries exactly the 4 over8g
-  failures plus under8g's `quantify`/biom step regardless of how the
-  samplesheet is assembled.
-- **Multi-run-per-samplesheet is already how the pipeline works.**
-  `meta.run` (from the `study_accession` column) drives every per-run
-  `groupTuple` combine/biom step; running `under8g` and `over8g` samples
-  through one invocation is the same mechanism the pipeline already uses
-  within a single batch, just with two `run` values present instead of one.
-  No ID collisions between the two samplesheets (checked: 0 of 1356 sample
-  IDs shared).
-- **Must launch from `gemma-preview`, not `graviton5-smoke`.** The local
-  checkout was reset to `origin/graviton5-smoke` (clean docs-only branch,
-  planned cleanup after `over8g` finished) — it has neither
-  `preprocess_gemma.nf` nor any of the MEDI memory fixes.
-  `origin/gemma-preview` carries all of it (`926ccc9` quantify, `bd96c74`
-  kraken, `preprocess_gemma.nf`, the AZ-corrected stats script). Launching
-  from the wrong branch risks task hashes shifting even for already-succeeded
-  samples, forcing an unwanted full recompute.
+`.nextflow/history` confirms `under8g` and `over8g` live in two different
+session UUIDs:
+
+| batch | session UUID | last (most recent) run in that session |
+|---|---|---|
+| `under8g` | `9fc54257-cfef-4879-b319-44d69fc7cb76` | `adoring_agnesi`, 2026-08-17 19:04, OK |
+| `over8g` | `96de13d1-9c29-48fb-bc20-37371f3a4bbc` | `sharp_stone`, 2026-08-17 22:52, OK |
+
+They split because the `over8g` stage-2 launch line has **no `-resume`
+flag** (`nextflow run main.nf -c ... --input '.../gemma-over8g.csv'`,
+confirmed in `.nextflow.log`), so it forked a fresh session UUID instead of
+continuing `under8g`'s. A bare `-resume` on a merged samplesheet would
+therefore attach to `over8g`'s session only — the 104 over8g samples would
+cache-hit, but **all 1252 under8g samples plus their combines would
+re-execute from scratch**, the opposite of the goal.
+
+Everything else in the original review held up: merging the two
+samplesheets is hash-neutral (`main.nf` builds a per-row channel with no
+cross-row state; `study_accession` survives as `meta.run`, so `groupTuple`
+combines keep their existing membership), and neither memory fix
+(`quantify` 24/48 GB, `kraken` 8/16 GB) leaks into any process script —
+`task.memory` is referenced nowhere in those processes, only `task.cpus`,
+unchanged. So the fix is minimal: **two separate invocations, each
+`-resume`d with its own explicit session UUID**, not one merged run.
 
 **Run plan:**
 
 ```bash
-git checkout gemma-preview        # already done — confirm before launching
-cat s3://.../samplesheets/gemma-under8g.csv \
-    <(tail -n +2 s3://.../samplesheets/gemma-over8g.csv) \
-    > gemma-cleanup.csv           # done — staged to s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-cleanup.csv, 1356 samples
+git checkout gemma-preview   # already done — has both memory fixes + preprocess_gemma.nf
 
-screen -S nf-gemma-cleanup
+screen -S nf-gemma-under8g-cleanup
 nextflow run main.nf -profile aws \
-  --input s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-cleanup.csv \
-  --project gemma -resume
+  --input s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-under8g.csv \
+  --project gemma -resume 9fc54257-cfef-4879-b319-44d69fc7cb76
+
+screen -S nf-gemma-over8g-cleanup
+nextflow run main.nf -profile aws \
+  --input s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-over8g.csv \
+  --project gemma -resume 96de13d1-9c29-48fb-bc20-37371f3a4bbc
 ```
 
-**Expected behavior:** skip ~2100+ cached-good tasks (all of under8g's and
-over8g's successful work); actually execute only: under8g's `quantify` +
-MEDI biom conversion (now 24/48 GB, should succeed), the 2 over8g
-`profile_function` retries, `sGMA_749`'s kraken retry (now 8/16 GB), and
-whatever per-run combine/biom steps depended on those outputs (e.g. over8g's
-`combine_humann_tables`/`convert_tables_to_biom` likely need to re-include
-`GMA_502`/`GMA_352`, since they published with those 2 samples missing the
-first time).
+**Expected behavior, each run:** `under8g` skips its ~1248 already-succeeded
+tasks and actually executes only `quantify` + MEDI biom conversion (now
+24/48 GB). `over8g` skips its 858 already-succeeded tasks and actually
+executes the 2 `profile_function` retries, `sGMA_749`'s kraken retry (now
+8/16 GB), and whatever per-run combine/biom steps depended on those 3
+outputs (its HUMAnN combines likely need to re-include `GMA_502`/`GMA_352`,
+published without them the first time).
+
+The merged samplesheet
+(`s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-cleanup.csv`) is
+**not used** by this plan — left staged in case a future genuinely-fresh
+combined run is wanted, but irrelevant to a `-resume`.
 
 Not yet launched as of this writing — staged and ready pending final go.
