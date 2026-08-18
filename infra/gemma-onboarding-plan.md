@@ -1,12 +1,12 @@
 # GEMMA onboarding plan — preprocessing, then a normal pipeline run
 
-Status: written 2026-08-14 as a plan; as of 2026-08-17 **stage 1 is complete at
-the 50M cap, `under8g` has finished, and `over8g` is running** — see *Revision 4*
-for what the execution actually showed. This document is a revision log — the
-sections below record the reasoning as it developed, including branches that
-were later abandoned. **Read the summary immediately below for what is actually
-true now**, then use the rest for the measurements and the rejected
-alternatives.
+Status: written 2026-08-14 as a plan; as of 2026-08-18 **both batches have run
+stage 2 to completion, each with a small number of recoverable task
+failures** — see *Revision 5* for the cleanup plan that finishes the run. This
+document is a revision log — the sections below record the reasoning as it
+developed, including branches that were later abandoned. **Read the summary
+immediately below for what is actually true now**, then use the rest for the
+measurements and the rejected alternatives.
 
 ## Where the design landed (2026-08-17) — read this first
 
@@ -748,3 +748,108 @@ zero failures, fleet 6 × `m8g.metal-24xl` + 1 × `c8g.12xlarge` at $5.64/h.
 the `error: -` field present on *every* ordinary task line — 289 hits on a run
 with no failures at all. Filter on `exit:` values or read `WorkflowStats`
 instead.
+
+## Revision 5 (2026-08-18) — over8g finished; the cleanup plan
+
+`over8g` stage 2 printed `Execution complete -- Goodbye` at
+`completed=858 failed=4 cached=0`. Both batches are now in the same state:
+essentially done, with a handful of recoverable task failures blocking full
+completeness.
+
+| batch | outcome | blocking failures |
+|---|---|---|
+| `under8g` | clean finish 2026-08-17 22:15 | `MEDI_QUANT:quantify` OOM'd 4/4 at the 4 GB default — `food_abundance.csv`/`food_content.csv` and `combined_bioms/medi/` never written |
+| `over8g` | clean finish 2026-08-18 | `profile_function` × `GMA_502`, `GMA_352` (exit 1, "essential container exited," no OOM annotation); `MEDI_QUANT:kraken` × `sGMA_749` (exit 137, both attempts) |
+
+Neither is a design problem — both are the last of the OOM/transient-failure
+class this doc has been tracking since Revision 4, now on the smaller side.
+
+### `GMA_502`/`GMA_352` are not size outliers
+
+Checked whether the two `profile_function` exit-1s were the largest over8g
+samples — a size-driven OOM would need a real memory bump before re-running.
+They aren't: ranked by merged-FASTQ gz bytes (post depth-cap), `GMA_352` is
+51st of 92 (9.11 GB) and `GMA_502` is 70th of 92 (8.61 GB), both near the
+batch floor (min 8.00 GB, median 9.25 GB, max 15.35 GB). Reads as a
+transient container/spot failure, not memory pressure — no
+`profile_function` change needed before `-resume`.
+
+### `MEDI_QUANT:kraken` memory bump: 8/16 GB (`bd96c74`)
+
+The three under8g kraken OOMs from Revision 4 (`GMA_383_neb_01`,
+`GMA_383_v_neb_01`, `GMA_448_neb_01`) plus over8g's `sGMA_749` make 4 failures
+across ~1350 kraken invocations (~0.3%) — small, but no longer "leave it
+alone and watch." Unlike `quantify`, **the trace gives no usable sizing
+evidence here**:
+
+- Every *successful* kraken run reports `peak_rss`/`peak_vmem` of
+  **~411–415 GB**, regardless of sample size. That's the shared, boot-warmed
+  414 GB Kraken2 hash, mmap'd via `--memory-mapping` — host page cache
+  attributed to the process, not this process's private allocation. It reads
+  the same number whether the run succeeds or would go on to OOM.
+- Every *failed* run shows `-` for all trace metrics — CloudWatch confirms
+  `OutOfMemoryError: Container killed due to memory usage`, but the container
+  was killed before Nextflow's first resource poll, so there's no captured
+  number at all, successful or otherwise.
+
+So the bump is empirical, not trace-derived: double the 4 GB process default
+to `8 GB` attempt 1, `16 GB` attempt 2 — cheap (kraken tasks run 1–2 min,
+spot-medi nodes have hundreds of GB free) and matches the existing
+2-attempt retry ladder. Applied in `bd96c74`.
+
+### The plan: one merged `-resume` run, not two separate ones
+
+`under8g`'s missing MEDI outputs and `over8g`'s 4 failures are both just
+`-resume` away — and since they went through separate `nextflow run`
+invocations for no reason other than being launched at different times, they
+can be recovered in a single one:
+
+- **Cache is shared, not per-run.** Both batches use the same S3 workDir
+  (`gutz-nf-reads-profilers-workdir`) and the same local `.nextflow/cache`
+  (127 accumulated session dirs on this host). Nextflow's resume skip-check
+  is a workDir hash lookup — does `work/<hash>/` already hold a successful
+  exit marker — not scoped to the session that created it. The docs call
+  this out explicitly as working "also in disjoint pipeline executions."
+  Failed tasks are never cached, so `-resume` retries exactly the 4 over8g
+  failures plus under8g's `quantify`/biom step regardless of how the
+  samplesheet is assembled.
+- **Multi-run-per-samplesheet is already how the pipeline works.**
+  `meta.run` (from the `study_accession` column) drives every per-run
+  `groupTuple` combine/biom step; running `under8g` and `over8g` samples
+  through one invocation is the same mechanism the pipeline already uses
+  within a single batch, just with two `run` values present instead of one.
+  No ID collisions between the two samplesheets (checked: 0 of 1356 sample
+  IDs shared).
+- **Must launch from `gemma-preview`, not `graviton5-smoke`.** The local
+  checkout was reset to `origin/graviton5-smoke` (clean docs-only branch,
+  planned cleanup after `over8g` finished) — it has neither
+  `preprocess_gemma.nf` nor any of the MEDI memory fixes.
+  `origin/gemma-preview` carries all of it (`926ccc9` quantify, `bd96c74`
+  kraken, `preprocess_gemma.nf`, the AZ-corrected stats script). Launching
+  from the wrong branch risks task hashes shifting even for already-succeeded
+  samples, forcing an unwanted full recompute.
+
+**Run plan:**
+
+```bash
+git checkout gemma-preview        # already done — confirm before launching
+cat s3://.../samplesheets/gemma-under8g.csv \
+    <(tail -n +2 s3://.../samplesheets/gemma-over8g.csv) \
+    > gemma-cleanup.csv           # done — staged to s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-cleanup.csv, 1356 samples
+
+screen -S nf-gemma-cleanup
+nextflow run main.nf -profile aws \
+  --input s3://gutz-nf-reads-profilers-runs/samplesheets/gemma-cleanup.csv \
+  --project gemma -resume
+```
+
+**Expected behavior:** skip ~2100+ cached-good tasks (all of under8g's and
+over8g's successful work); actually execute only: under8g's `quantify` +
+MEDI biom conversion (now 24/48 GB, should succeed), the 2 over8g
+`profile_function` retries, `sGMA_749`'s kraken retry (now 8/16 GB), and
+whatever per-run combine/biom steps depended on those outputs (e.g. over8g's
+`combine_humann_tables`/`convert_tables_to_biom` likely need to re-include
+`GMA_502`/`GMA_352`, since they published with those 2 samples missing the
+first time).
+
+Not yet launched as of this writing — staged and ready pending final go.
