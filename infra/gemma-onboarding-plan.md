@@ -1,8 +1,8 @@
 # GEMMA onboarding plan — preprocessing, then a normal pipeline run
 
-Status: written 2026-08-14 as a plan; as of 2026-08-18 **both batches have run
-stage 2 to completion, each with a small number of recoverable task
-failures** — see *Revision 5* for the cleanup plan that finishes the run. This
+Status: written 2026-08-14 as a plan; as of 2026-08-19 **`under8g`'s cleanup
+run finished clean (23:59 UTC 2026-08-18) and `over8g`'s cleanup run is
+in-flight** — see *Revision 6* for what the cleanup run actually did. This
 document is a revision log — the sections below record the reasoning as it
 developed, including branches that were later abandoned. **Read the summary
 immediately below for what is actually true now**, then use the rest for the
@@ -865,4 +865,43 @@ The merged samplesheet
 **not used** by this plan — left staged in case a future genuinely-fresh
 combined run is wanted, but irrelevant to a `-resume`.
 
-Not yet launched as of this writing — staged and ready pending final go.
+## Revision 6 (2026-08-19) — cleanup run executed; genefamilies biom memory refined
+
+Both cleanup invocations from Revision 5 were launched, in `screen` sessions
+`nf-gemma-under8g-cleanup` / `nf-gemma-over8g-cleanup`, from `gemma-preview`.
+
+**`under8g` cleanup: DONE, 23:59 UTC 2026-08-18, clean `Execution complete --
+Goodbye`.** The `quantify` (24/48 GB) and `kraken` (8/16 GB) memory fixes both
+held — `MEDI_QUANT:kraken` succeeded on all 3 previously-OOM'ing samples
+(`GMA_383_neb_01`, `GMA_383_v_neb_01`, `GMA_448_neb_01`) on their retry, and
+`quantify`/`convert_medi_to_biom` completed, so `food_abundance.csv`,
+`food_content.csv` and `combined_bioms/medi/` are now published — the gap
+Revision 5 opened with is closed.
+
+One thing the ladder in Revision 5 didn't anticipate: `convert_tables_to_biom
+(under8g_genefamilies)` — both the stratified and unstratified variants —
+OOM'd at attempt-1 (32 GB), and one of the two also OOM'd at attempt-2
+(90 GB), only succeeding on attempt-3 (180 GB, the last retry `maxRetries: 2`
+allows). Across this run's evidence, the 32 GB attempt on this specific
+table/type never once succeeded (0/2), and 90 GB succeeded only 1/2 — the
+genefamilies table (the largest of the four biom types, ~24 GB TSV) is
+consistently underestimated by the shared ladder that also serves the much
+smaller reactions/pathabundance/humann_taxonomy tables, which all succeeded
+first try at 32 GB.
+
+**Fix applied (commit `603b4b2`, `conf/aws_batch.config`):**
+`convert_tables_to_biom`'s memory closure now checks `task.tag` (which
+carries `<run>_<type>`, e.g. `under8g_genefamilies`) and gives genefamilies
+its own ladder — 90/180/300 GB — while the other three types keep the
+original 32/90/180 GB. This skips the attempt that never succeeds for
+genefamilies specifically, without inflating memory requests (and hurting
+`spot-humann` packing) for the table types that were already fine at 32 GB.
+Does not affect the already-finished `under8g` run; applies automatically to
+`over8g`'s cleanup run since a fresh `nextflow run` re-parses config at
+launch.
+
+**`over8g` cleanup: launched 00:00 UTC 2026-08-19**, `-resume
+96de13d1-9c29-48fb-bc20-37371f3a4bbc`, in progress as of this writing. Expect
+the same shape of work Revision 5 predicted (2 `profile_function` retries,
+`sGMA_749`'s kraken retry, dependent combine/biom steps) plus a genefamilies
+biom conversion that should now avoid the wasted 32 GB attempt.
