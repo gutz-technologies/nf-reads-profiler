@@ -1,12 +1,11 @@
 # GEMMA onboarding plan — preprocessing, then a normal pipeline run
 
-Status: written 2026-08-14 as a plan; as of 2026-08-19 **`under8g`'s cleanup
-run finished clean (23:59 UTC 2026-08-18) and `over8g`'s cleanup run is
-in-flight** — see *Revision 6* for what the cleanup run actually did. This
-document is a revision log — the sections below record the reasoning as it
-developed, including branches that were later abandoned. **Read the summary
-immediately below for what is actually true now**, then use the rest for the
-measurements and the rejected alternatives.
+Status: written 2026-08-14 as a plan; as of 2026-08-19 **both `under8g` and
+`over8g` cleanup runs finished clean — GEMMA production run complete** (see
+*Revision 7*). This document is a revision log — the sections below record
+the reasoning as it developed, including branches that were later abandoned.
+**Read the summary immediately below for what is actually true now**, then
+use the rest for the measurements and the rejected alternatives.
 
 ## Where the design landed (2026-08-17) — read this first
 
@@ -905,3 +904,40 @@ launch.
 the same shape of work Revision 5 predicted (2 `profile_function` retries,
 `sGMA_749`'s kraken retry, dependent combine/biom steps) plus a genefamilies
 biom conversion that should now avoid the wasted 32 GB attempt.
+
+## Revision 7 (2026-08-19) — `over8g` cleanup finished; GEMMA production run complete
+
+`over8g` cleanup printed `Execution complete -- Goodbye` at 03:19 UTC
+2026-08-19 (`.nextflow.log`, session `96de13d1-9c29-48fb-bc20-37371f3a4bbc`).
+`WorkflowStats` reported `succeededCount=32; failedCount=2; cachedCount=2`,
+but both "failed" entries were retried-and-recovered attempts, not dropped
+samples: `clean_reads (sGMA_749)` OOM'd once (exit 137) then succeeded on
+retry; `profile_function (sGMA_749)` OOM'd once (exit 1) then succeeded on
+retry. `MEDI_QUANT` (kraken/quantify/add_lineage/convert_medi_to_biom) all
+completed clean this run. 103 of 104 `over8g` samples were skip-cached
+(already complete from prior attempts) + `sGMA_749` freshly completed = all
+104 samples accounted for, zero drops.
+
+Confirmed against published outputs (S3, `results/gemma/`):
+
+- `over8g/function/` — 521 files ≈ 104 samples × 5 (log + 4 HUMAnN TSVs).
+- `under8g/function/` — 6226 files ≈ 1245 samples × 5 (7 samples below
+  `minreads` were logged and dropped, not failed — matches the earlier
+  1245/1252 count in project memory).
+- `combined_bioms/` has all six type dirs (`genefamilies`, `humann_taxonomy`,
+  `metaphlan`, `pathabundance`, `reactions`, `medi`) populated.
+- `over8g/medi/` and `under8g/medi/` both have `food_abundance.csv`,
+  `food_content.csv`, `D_counts.csv`, `G_counts.csv`, `S_counts.csv`, and
+  `multiqc_report.html`.
+
+The genefamilies-specific 90/180/300 GB memory ladder (commit `603b4b2`)
+applied automatically to this run's `convert_tables_to_biom
+(over8g_genefamilies)` — no OOM observed on it here.
+
+No nextflow process is running (`ps aux` clean); the `nf-gemma-under8g`
+screen session is stale (idle, no process) and can be closed. **GEMMA is
+done** — no further pipeline runs planned against `under8g`/`over8g`. The
+next actions are the deferred, non-pipeline cleanup: closing the stale screen
+session and (per project memory `project_gemma_deadlines`) nothing else is
+time-pressured now that both batches are published, since the merged FASTQ
+expiry (~2026-09-14) only mattered while a re-run was still possible.
