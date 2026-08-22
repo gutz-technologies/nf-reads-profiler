@@ -5,8 +5,24 @@ import json
 import re
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+
+TIMING = "--timing" in sys.argv
+
+
+def timed(label):
+    class _Timer:
+        def __enter__(self):
+            self.t0 = time.perf_counter()
+            return self
+
+        def __exit__(self, *exc):
+            if TIMING:
+                print(f"[timing] {label}: {time.perf_counter() - self.t0:.2f}s", file=sys.stderr)
+
+    return _Timer()
 
 LOOKBACK_DAYS = 7
 S3_BUCKETS = [
@@ -57,21 +73,30 @@ def clean_label(usage_type):
     return s
 
 
-def print_table(title, by_date, cols):
+def print_table(title, by_date, cols, clean=clean_label, total_row=False):
     dates = sorted(by_date.keys())
-    labels = ["Date"] + [clean_label(c) for c in cols] + ["Total"]
+    labels = ["Date"] + [clean(c) for c in cols] + ["Total"]
 
     rows = []
+    col_sums = [0.0] * len(cols)
     for date in dates:
         row = by_date[date]
         vals = [row.get(c, 0.0) for c in cols]
         total = sum(vals)
         if total < 0.005:
             continue
+        for i, v in enumerate(vals):
+            col_sums[i] += v
         rows.append([date] + [f"${v:.2f}" for v in vals] + [f"${total:.2f}"])
 
     if not rows:
         return
+
+    if total_row:
+        grand = sum(col_sums)
+        n_days = len(rows)
+        rows.append([f"TOTAL ({n_days}d)"] + [f"${v:.2f}" for v in col_sums] + [f"${grand:.2f}"])
+        rows.append(["avg/day"] + [f"${v / n_days:.2f}" for v in col_sums] + [f"${grand / n_days:.2f}"])
 
     widths = [max(len(h), max(len(r[i]) for r in rows)) for i, h in enumerate(labels)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
@@ -84,15 +109,80 @@ def print_table(title, by_date, cols):
     print()
 
 
+def vm_category(col):
+    label = clean_label(col)
+    if label.startswith("On-Demand:"):
+        return "On-Demand"
+    if label.startswith("Spot:"):
+        return "Spot"
+    return "Other"
+
+
+def category_summary_table(title, by_date, categorize_fn, categories):
+    summary_by_date = {}
+    for date, row in by_date.items():
+        buckets = {c: 0.0 for c in categories}
+        for col, cost in row.items():
+            buckets[categorize_fn(col)] += cost
+        summary_by_date[date] = buckets
+    print_table(title, summary_by_date, categories, clean=lambda c: c, total_row=True)
+
+
+# CloudWatch publishes these once/day per bucket at no extra cost — no object
+# enumeration needed. Covers the storage classes these buckets actually use
+# (matches S3 Storage Detail's TimedStorage-* breakdown).
+CW_STORAGE_TYPES = [
+    "StandardStorage",
+    "IntelligentTieringFAStorage",
+    "IntelligentTieringIAStorage",
+    "GlacierInstantRetrievalSizeBytes",
+]
+
+
 def bucket_size_gb(bucket):
+    """Sum of latest CloudWatch daily BucketSizeBytes datapoint across storage classes.
+    One API call, independent of bucket object count — was a 27s recursive `s3 ls` before."""
+    t0 = time.perf_counter()
+    now = datetime.now(timezone.utc)
+    queries = [
+        {
+            "Id": f"q{i}",
+            "MetricStat": {
+                "Metric": {
+                    "Namespace": "AWS/S3",
+                    "MetricName": "BucketSizeBytes",
+                    "Dimensions": [
+                        {"Name": "BucketName", "Value": bucket},
+                        {"Name": "StorageType", "Value": st},
+                    ],
+                },
+                "Period": 86400,
+                "Stat": "Average",
+            },
+        }
+        for i, st in enumerate(CW_STORAGE_TYPES)
+    ]
     r = subprocess.run(
-        ["aws", "s3", "ls", "--summarize", "--recursive", f"s3://{bucket}", "--region", "us-east-2"],
+        [
+            "aws", "cloudwatch", "get-metric-data",
+            "--region", "us-east-2",
+            "--start-time", (now - timedelta(days=3)).isoformat(),
+            "--end-time", now.isoformat(),
+            "--metric-data-queries", json.dumps(queries),
+            "--output", "json",
+        ],
         capture_output=True, text=True,
     )
-    for line in r.stdout.splitlines():
-        if "Total Size:" in line:
-            return int(line.split()[-1]) / 1e9
-    return None
+    if TIMING:
+        print(f"[timing] cloudwatch BucketSizeBytes {bucket}: {time.perf_counter() - t0:.2f}s", file=sys.stderr)
+    if r.returncode != 0:
+        return None
+    data = json.loads(r.stdout)
+    total_bytes = 0.0
+    for result in data.get("MetricDataResults", []):
+        if result["Values"]:
+            total_bytes += result["Values"][0]
+    return total_bytes / 1e9
 
 
 def print_bucket_table():
@@ -126,15 +216,20 @@ def main():
     print(f"Cost Explorer data typically lags 8–14 h after midnight UTC. Showing {start} to {end - timedelta(days=1)} (complete days only).")
     print()
 
-    compute_by_date, compute_cols = query_daily("Amazon Elastic Compute Cloud - Compute", start.isoformat(), end.isoformat())
+    with timed("CE query: EC2 Compute"):
+        compute_by_date, compute_cols = query_daily("Amazon Elastic Compute Cloud - Compute", start.isoformat(), end.isoformat())
+    category_summary_table("EC2 Compute Summary: On-Demand vs Spot (VM burn comparison)", compute_by_date, vm_category, ["On-Demand", "Spot", "Other"])
     print_table("VM Costs (EC2 Compute)", compute_by_date, compute_cols)
 
-    other_by_date, other_cols = query_daily("EC2 - Other", start.isoformat(), end.isoformat())
+    with timed("CE query: EC2 Other"):
+        other_by_date, other_cols = query_daily("EC2 - Other", start.isoformat(), end.isoformat())
     print_table("Other EC2 Costs", other_by_date, other_cols)
 
-    print_bucket_table()
+    with timed("S3 bucket size listing (all buckets, parallel)"):
+        print_bucket_table()
 
-    s3_by_date, s3_cols = query_daily("Amazon Simple Storage Service", start.isoformat(), end.isoformat())
+    with timed("CE query: S3"):
+        s3_by_date, s3_cols = query_daily("Amazon Simple Storage Service", start.isoformat(), end.isoformat())
 
     # S3 Summary: Storage vs Requests vs Other per day
     def s3_category(col):
