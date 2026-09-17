@@ -4,7 +4,7 @@ nextflow.enable.dsl=2
 
 include { profile_taxa; profile_function; combine_humann_tables; combine_metaphlan_tables; combine_humann_taxonomy_tables; convert_tables_to_biom; split_stratified_tables; regroup_genefamilies } from './modules/community_characterisation'
 include { MULTIQC; get_software_versions; clean_reads; count_reads} from './modules/house_keeping'
-include { AWS_DOWNLOAD; FASTERQ_DUMP  } from './modules/data_handling'
+include { AWS_DOWNLOAD; SRA_PREFETCH; FASTERQ_DUMP  } from './modules/data_handling'
 include { MEDI_QUANT } from './subworkflows/quant'
 include { STRAINPHLAN } from './subworkflows/strainphlan'
 include { samplesheetToList } from 'plugin/nf-schema'
@@ -29,6 +29,7 @@ nf-reads-profiler - Version: ${workflow.manifest.version}
     --outdir   path    Output base directory (default: results_local_logs)
 
   Main options:
+    --dbgap_ngc          path          dbGaP .ngc key; authenticates SRA download and conversion
     --singleEnd          <true|false>  whether the layout is single-end (default: false)
     --enable_humann      <true|false>  run HUMAnN4 functional profiling and downstream steps (default: true)
     --enable_medi        <true|false>  run MEDI food-microbiome quantification (default: false; requires enable_humann)
@@ -176,19 +177,17 @@ workflow {
       }
       .set { sra_ids }
 
-  AWS_DOWNLOAD(sra_ids)
+  // A value channel reuses the staged key for every run; [] means no key.
+  ngc_key = channel.value(params.dbgap_ngc ? file(params.dbgap_ngc, checkIfExists: true) : [])
+  if (params.dbgap_ngc) {
+    SRA_PREFETCH(sra_ids, ngc_key)
+    sra_files = SRA_PREFETCH.out.sra_file
+  } else {
+    AWS_DOWNLOAD(sra_ids)
+    sra_files = AWS_DOWNLOAD.out.sra_file
+  }
 
-  // def sortReads = { reads ->
-  //     reads.sort()
-  // }
-  // FASTERQ_DUMP(AWS_DOWNLOAD.out.sra_file)
-  //     .reads
-  //     .map { meta, reads -> 
-  //         meta.single_end = reads.size() == 1
-  //         [ meta, sortReads(reads) ]
-  //     }
-  //     .set { sra_reads }
-  FASTERQ_DUMP(AWS_DOWNLOAD.out.sra_file)
+  FASTERQ_DUMP(sra_files, ngc_key)
     .reads
     .map { meta, raw_reads ->
         // If raw_reads is a single Path, wrap it in a list

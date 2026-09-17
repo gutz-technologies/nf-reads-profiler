@@ -23,6 +23,44 @@ process AWS_DOWNLOAD {
     """
 }
 
+process SRA_PREFETCH {
+    tag "$meta.id"
+    label 'process_low'
+
+    conda "bioconda::sra-tools=3.2.1"
+    container params.docker_container_sra
+
+    input:
+    tuple val(meta), val(sra_id)
+    path ngc, stageAs: 'dbgap.ngc'
+
+    output:
+    tuple val(meta), path("${sra_id}"), emit: sra_file
+    path "versions.yml", emit: versions
+
+    script:
+    """
+    prefetch --ngc "$ngc" --max-size u --output-directory . "$sra_id"
+
+    # Toolkit versions may name protected archives RUN_dbgap_PROJECT.sra.
+    # Keep the accession directory (and any companion files) for conversion.
+    mapfile -t archives < <(find . -type f \\( -name '${sra_id}.sra' -o -name '${sra_id}_dbgap_*.sra' \\))
+    if [ "\${#archives[@]}" -ne 1 ]; then
+        echo "Expected one SRA archive for $sra_id" >&2
+        exit 1
+    fi
+    mkdir -p "$sra_id"
+    if [ "\${archives[0]}" != "./${sra_id}/${sra_id}.sra" ]; then
+        mv "\${archives[0]}" "${sra_id}/${sra_id}.sra"
+    fi
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        sratools: \$(prefetch --version 2>&1 | grep -Eo '[0-9.]+')
+    END_VERSIONS
+    """
+}
+
 process FASTERQ_DUMP {
     tag "$meta.id"
     label 'process_medium'
@@ -34,6 +72,7 @@ process FASTERQ_DUMP {
 
     input:
     tuple val(meta), path(sra_file)
+    path ngc, stageAs: 'dbgap.ngc'
 
     output:
     tuple val(meta), path("processed/*.fastq.gz"), emit: reads
@@ -41,14 +80,21 @@ process FASTERQ_DUMP {
 
     script:
     def args = task.ext.args ?: ''
+    def ngc_args = ngc ? '--ngc dbgap.ngc' : ''
     """
+    archive="$sra_file"
+    if [ -d "\$archive" ]; then
+        archive="\$archive/\$(basename "\$archive").sra"
+    fi
+
     # Run fasterq-dump
     fasterq-dump \\
         $args \\
+        $ngc_args \\
         --threads $task.cpus \\
         --split-3 \\
         --mem ${task.memory.toGiga()}G \\
-        $sra_file
+        "\$archive"
 
     # Compress all fastq files. No -p; use all open cpu cores!
     pigz *.fastq
