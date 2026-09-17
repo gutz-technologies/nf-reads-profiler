@@ -12,6 +12,30 @@ development.
 
 ## Usage
 
+### dbGaP SRA downloads with an NGC key
+
+Use the usual accession samplesheet (`sample,study_accession,sra_accession`)
+and supply your repository key:
+
+```bash
+nextflow run main.nf -profile docker \
+  --input samplesheet.csv --project dbgap \
+  --dbgap_ngc /path/to/your_file.ngc
+```
+
+Keep your usual database configuration/profile options. With `--dbgap_ngc`, the
+pipeline runs `prefetch --ngc`, normalizes protected archive names to `RUN.sra`,
+then runs `fasterq-dump --ngc`, following the
+[NCBI dbGaP download guide](https://www.ncbi.nlm.nih.gov/sra/docs/sra-dbgap-download/).
+Without this option, SRA downloads still use anonymous public S3. Local FASTQ
+inputs use their existing path. A raw `SraRunTable.csv` must first be converted to
+the pipeline samplesheet columns; the NGC key supplies authorization, not run IDs.
+
+Nextflow stages the key as a process input for download and conversion, including
+on remote executors; protect the work directory/storage accordingly. The key is
+not published as a result. Downloads have no prefetch size cap; `--nreads` applies
+after full download and FASTQ conversion.
+
 ### AWS Batch (production)
 
 **Always launch inside `screen` — SSH disconnects and Claude Code client exits will
