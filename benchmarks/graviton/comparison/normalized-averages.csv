@@ -1,0 +1,5 @@
+generation,process,instance_type,samples,minutes_per_million,estimated_usd_per_million
+g4,profile_function,m8g.metal-24xl,5,10.174446,0.012633271561851851
+g4,profile_taxa,m8g.metal-24xl,5,6.28705711111111,0.00969584101962963
+g5,profile_function,c9g.24xlarge,5,8.747408777777778,0.01665492371666667
+g5,profile_taxa,c9g.48xlarge,5,5.436515444444444,0.014150180720617285

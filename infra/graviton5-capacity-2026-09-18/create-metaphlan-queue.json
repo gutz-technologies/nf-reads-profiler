@@ -1,0 +1,15 @@
+{
+  "jobQueueName": "spot-metaphlan-g5",
+  "state": "DISABLED",
+  "priority": 100,
+  "computeEnvironmentOrder": [
+    {
+      "order": 1,
+      "computeEnvironment": "spot-metaphlan-g5"
+    }
+  ],
+  "tags": {
+    "Project": "nf-reads-profiler",
+    "Environment": "graviton5-test"
+  }
+}

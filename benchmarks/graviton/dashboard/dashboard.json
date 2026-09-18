@@ -1,0 +1,496 @@
+{
+  "start": "-PT6H",
+  "periodOverride": "inherit",
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 3,
+      "properties": {
+        "markdown": "# Graviton benchmark \u2014 G4 vs G5\n100k \u00b7 300k \u00b7 1m \u00b7 3m \u00b7 10m reads | us-east-2 | G4 above, G5 below. Queue-wide metrics include other runs and failed attempts. Counts are per plotted interval, not run totals.\n\n**G5 live queue-depth telemetry is connected** (2026-09-18 16:37 UTC): spot-short-g5, spot-metaphlan-g5 and spot-humann-g5 were added to the queue-depth Lambda QUEUE_ARNS alongside the four original queues; depth is polled every 60s. The G5 queues are currently DISABLED, so zeros are real zeros. Blank metrics still do not mean zero. Success/failure events use the existing all-queue publisher. Dashboard is standalone and editable in AWS."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 3,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G4 \u2014 tiny spot (spot-queue)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-queue",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 3,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G4 \u2014 MetaPhlAn spot (spot-metaphlan)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 3,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G4 \u2014 HUMAnN spot (spot-humann)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 10,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G5 \u2014 tiny spot (spot-short-g5)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 10,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G5 \u2014 MetaPhlAn spot (spot-metaphlan-g5)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 10,
+      "width": 8,
+      "height": 7,
+      "properties": {
+        "title": "G5 \u2014 HUMAnN spot (spot-humann-g5)",
+        "metrics": [
+          [
+            "AWS/Batch",
+            "SucceededJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#2ca02c",
+              "label": "Succeeded"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "FailedJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#d62728",
+              "label": "Failed"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "PendingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#ff7f0e",
+              "label": "Pending",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunnableJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#1f77b4",
+              "label": "Runnable",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "StartingJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#9467bd",
+              "label": "Starting",
+              "stat": "Maximum"
+            }
+          ],
+          [
+            "AWS/Batch",
+            "RunningJobCount",
+            "JobQueue",
+            "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+            {
+              "color": "#17becf",
+              "label": "Running",
+              "stat": "Maximum"
+            }
+          ]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "view": "timeSeries",
+        "region": "us-east-2"
+      }
+    }
+  ]
+}

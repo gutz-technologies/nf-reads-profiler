@@ -39,6 +39,23 @@ Parameters:
     Default: 200
     Description: Monthly AWS spend alert threshold in USD (alerts fire at 80% actual and 100% forecasted)
 
+  AdditionalQueueArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Extra job-queue ARNs for BatchQueueDepthFunction to poll, on top of the
+      four imported from the compute stack. For queues created outside
+      batch-stack.yaml (e.g. the Graviton5 benchmark queues), which export no
+      ARN to import. Empty (default) polls only the four imported queues.
+      DRIFT NOTE (2026-09-18): the three G5 ARNs below were applied to the live
+      Lambda with a direct `aws lambda update-function-configuration`, so this
+      stack is in drift on BatchQueueDepthFunction.Environment until deployed
+      with this parameter set. Deploying WITHOUT it reverts G5 telemetry.
+      Value used for the 2026-09-18 G5 benchmark deployment:
+        arn:aws:batch:us-east-2:730883236839:job-queue/spot-short-g5,
+        arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5,
+        arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5
+
 Resources:
 
 # ---------------------------------------------------------------------------
@@ -227,7 +244,8 @@ Resources:
 # gauge polled every 60s via list-jobs. The previous design emitted
 # value=1 per state-change event, which gave the alarm at most "1" to
 # look at; with this Lambda the alarm sees real queue depth.
-# Polls ALL FOUR queues (spot-queue, spot-metaphlan, spot-humann, spot-medi) so
+# Polls the four compute-stack queues (spot-queue, spot-metaphlan, spot-humann,
+# spot-medi) plus any ARNs passed in AdditionalQueueArns, so
 # the per-queue dashboard depth widgets populate, not just spot-queue.
 # ---------------------------------------------------------------------------
 
@@ -276,12 +294,16 @@ Resources:
         Variables:
           # Comma-separated job-queue ARNs. list_jobs accepts an ARN for
           # jobQueue, and the same ARN is the CloudWatch JobQueue dimension.
+          # AdditionalQueueArns appends queues that batch-stack.yaml does not
+          # export (e.g. the G5 benchmark queues). Empty default leaves a
+          # trailing comma, which the handler's `if q` filter drops.
           QUEUE_ARNS: !Join
             - ","
             - - Fn::ImportValue: !Sub "${BatchStackName}-SpotQueueArn"
               - Fn::ImportValue: !Sub "${BatchStackName}-MetaphlanQueueArn"
               - Fn::ImportValue: !Sub "${BatchStackName}-HumannQueueArn"
               - Fn::ImportValue: !Sub "${BatchStackName}-MediQueueArn"
+              - !Join [",", !Ref AdditionalQueueArns]
       Code:
         ZipFile: |
           import os
@@ -325,7 +347,8 @@ Resources:
                           'Value': count_jobs(queue, status),
                           'Unit': 'Count',
                       })
-              # PutMetricData caps at 1000 metrics/call; 4 queues x 5 statuses = 20.
+              # PutMetricData caps at 1000 metrics/call; 5 statuses per queue
+              # (4 imported + AdditionalQueueArns) stays far under that.
               cw.put_metric_data(Namespace='AWS/Batch', MetricData=metric_data)
       Tags:
         - Key: Project

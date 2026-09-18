@@ -1,0 +1,239 @@
+{
+  "humann": {
+    "computeEnvironmentName": "SpotHumannComputeEnviron-oxqAp0dDXiodwz5e",
+    "computeEnvironmentArn": "arn:aws:batch:us-east-2:730883236839:compute-environment/SpotHumannComputeEnviron-oxqAp0dDXiodwz5e",
+    "ecsClusterArn": "arn:aws:ecs:us-east-2:730883236839:cluster/AWSBatch-SpotHumannComputeEnviron-oxqAp0dDXiodwz5e-075b32db-f0fa-3116-bf69-a4bb488b3fd1",
+    "tags": {
+      "Project": "nf-reads-profiler",
+      "Environment": "development"
+    },
+    "type": "MANAGED",
+    "state": "ENABLED",
+    "status": "VALID",
+    "statusReason": "ComputeEnvironment Healthy",
+    "computeResources": {
+      "type": "SPOT",
+      "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
+      "minvCpus": 0,
+      "maxvCpus": 960,
+      "desiredvCpus": 0,
+      "instanceTypes": [
+        "c8g.12xlarge",
+        "c8g.48xlarge",
+        "c8gd.48xlarge",
+        "c8g.metal-24xl",
+        "c8g.metal-48xl",
+        "c8gn.48xlarge",
+        "m8g.metal-24xl",
+        "m8gd.metal-48xl",
+        "r8g.metal-24xl",
+        "r8g.metal-48xl"
+      ],
+      "subnets": [
+        "subnet-09159c654acc505a3",
+        "subnet-03afe111356916511",
+        "subnet-0d0f1d152c1656677"
+      ],
+      "securityGroupIds": [
+        "sg-02b677b54c23dcc2c"
+      ],
+      "instanceRole": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile",
+      "tags": {
+        "Project": "nf-reads-profiler",
+        "Environment": "development"
+      },
+      "bidPercentage": 50,
+      "spotIamFleetRole": "arn:aws:iam::730883236839:role/nf-reads-profiler-spot-fleet-role",
+      "launchTemplate": {
+        "launchTemplateId": "lt-02788b6d2c1e8d5a6",
+        "version": "$Latest",
+        "overrides": []
+      },
+      "ec2Configuration": [
+        {
+          "imageType": "ECS_AL2023"
+        }
+      ]
+    },
+    "serviceRole": "arn:aws:iam::730883236839:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+    "containerOrchestrationType": "ECS",
+    "uuid": "adc58a0e-1f42-3d7c-85e1-9647bf1d123f"
+  },
+  "glue": {
+    "computeEnvironmentName": "SpotComputeEnvironment-1dDk6WZcHIFWcOrb",
+    "computeEnvironmentArn": "arn:aws:batch:us-east-2:730883236839:compute-environment/SpotComputeEnvironment-1dDk6WZcHIFWcOrb",
+    "ecsClusterArn": "arn:aws:ecs:us-east-2:730883236839:cluster/AWSBatch-SpotComputeEnvironment-1dDk6WZcHIFWcOrb-b60f4370-b191-37d6-ba7f-80ba71a2e5a2",
+    "tags": {
+      "Project": "nf-reads-profiler",
+      "Environment": "development"
+    },
+    "type": "MANAGED",
+    "state": "ENABLED",
+    "status": "VALID",
+    "statusReason": "ComputeEnvironment Healthy",
+    "computeResources": {
+      "type": "SPOT",
+      "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
+      "minvCpus": 0,
+      "maxvCpus": 256,
+      "desiredvCpus": 0,
+      "instanceTypes": [
+        "m8g.2xlarge",
+        "m8g.4xlarge",
+        "c8g.2xlarge",
+        "c8g.4xlarge"
+      ],
+      "subnets": [
+        "subnet-09159c654acc505a3",
+        "subnet-03afe111356916511",
+        "subnet-0d0f1d152c1656677"
+      ],
+      "securityGroupIds": [
+        "sg-02b677b54c23dcc2c"
+      ],
+      "instanceRole": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile",
+      "tags": {
+        "Project": "nf-reads-profiler",
+        "Environment": "development"
+      },
+      "bidPercentage": 50,
+      "spotIamFleetRole": "arn:aws:iam::730883236839:role/nf-reads-profiler-spot-fleet-role",
+      "launchTemplate": {
+        "launchTemplateId": "lt-0d9193dd0f66d68ee",
+        "version": "$Latest",
+        "overrides": []
+      },
+      "ec2Configuration": [
+        {
+          "imageType": "ECS_AL2023"
+        }
+      ]
+    },
+    "serviceRole": "arn:aws:iam::730883236839:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+    "containerOrchestrationType": "ECS",
+    "uuid": "142e5024-1dbb-3a20-8f04-4d849c28123e"
+  },
+  "medi": {
+    "computeEnvironmentName": "SpotMediComputeEnvironme-WW6oZWYdYGVBKXCV",
+    "computeEnvironmentArn": "arn:aws:batch:us-east-2:730883236839:compute-environment/SpotMediComputeEnvironme-WW6oZWYdYGVBKXCV",
+    "ecsClusterArn": "arn:aws:ecs:us-east-2:730883236839:cluster/AWSBatch-SpotMediComputeEnvironme-WW6oZWYdYGVBKXCV-316b97b1-8232-3644-baf2-025fdf04eb8b",
+    "tags": {
+      "Project": "nf-reads-profiler",
+      "Environment": "development"
+    },
+    "type": "MANAGED",
+    "state": "ENABLED",
+    "status": "VALID",
+    "statusReason": "ComputeEnvironment Healthy",
+    "computeResources": {
+      "type": "SPOT",
+      "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
+      "minvCpus": 0,
+      "maxvCpus": 100,
+      "desiredvCpus": 0,
+      "instanceTypes": [
+        "r8gd.metal-24xl",
+        "i8g.24xlarge",
+        "r8gd.24xlarge",
+        "m8gd.metal-48xl",
+        "r8gd.metal-48xl",
+        "i8g.48xlarge"
+      ],
+      "subnets": [
+        "subnet-09159c654acc505a3",
+        "subnet-03afe111356916511",
+        "subnet-0d0f1d152c1656677"
+      ],
+      "securityGroupIds": [
+        "sg-02b677b54c23dcc2c"
+      ],
+      "instanceRole": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile",
+      "tags": {
+        "Project": "nf-reads-profiler",
+        "Environment": "development"
+      },
+      "bidPercentage": 50,
+      "spotIamFleetRole": "arn:aws:iam::730883236839:role/nf-reads-profiler-spot-fleet-role",
+      "launchTemplate": {
+        "launchTemplateId": "lt-017c752cc1c043900",
+        "version": "$Latest",
+        "overrides": []
+      },
+      "ec2Configuration": [
+        {
+          "imageType": "ECS_AL2023"
+        }
+      ]
+    },
+    "serviceRole": "arn:aws:iam::730883236839:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+    "updatePolicy": {
+      "terminateJobsOnUpdate": false,
+      "jobExecutionTimeoutMinutes": 30
+    },
+    "containerOrchestrationType": "ECS",
+    "uuid": "df95524e-6242-312a-8254-9273ce20fb30"
+  },
+  "metaphlan": {
+    "computeEnvironmentName": "SpotMetaphlanComputeEnvi-fcBWFMwh79fzN3bX",
+    "computeEnvironmentArn": "arn:aws:batch:us-east-2:730883236839:compute-environment/SpotMetaphlanComputeEnvi-fcBWFMwh79fzN3bX",
+    "ecsClusterArn": "arn:aws:ecs:us-east-2:730883236839:cluster/AWSBatch-SpotMetaphlanComputeEnvi-fcBWFMwh79fzN3bX-c1faf145-8df7-3606-9775-2334b80fd3bd",
+    "tags": {
+      "Project": "nf-reads-profiler",
+      "Environment": "development"
+    },
+    "type": "MANAGED",
+    "state": "ENABLED",
+    "status": "VALID",
+    "statusReason": "ComputeEnvironment Healthy",
+    "computeResources": {
+      "type": "SPOT",
+      "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
+      "minvCpus": 0,
+      "maxvCpus": 200,
+      "desiredvCpus": 0,
+      "instanceTypes": [
+        "c8g.12xlarge",
+        "c8g.metal-24xl",
+        "c8gd.24xlarge",
+        "m8g.metal-24xl",
+        "c8g.48xlarge",
+        "c8g.metal-48xl",
+        "c8gd.48xlarge",
+        "c8gn.48xlarge",
+        "m8gd.metal-48xl",
+        "r8g.metal-48xl",
+        "x8g.8xlarge",
+        "x8g.12xlarge",
+        "r8g.metal-24xl"
+      ],
+      "subnets": [
+        "subnet-09159c654acc505a3",
+        "subnet-03afe111356916511",
+        "subnet-0d0f1d152c1656677"
+      ],
+      "securityGroupIds": [
+        "sg-02b677b54c23dcc2c"
+      ],
+      "instanceRole": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile",
+      "tags": {
+        "Project": "nf-reads-profiler",
+        "Environment": "development"
+      },
+      "bidPercentage": 50,
+      "spotIamFleetRole": "arn:aws:iam::730883236839:role/nf-reads-profiler-spot-fleet-role",
+      "launchTemplate": {
+        "launchTemplateId": "lt-0764d7c0d6cfc0706",
+        "version": "$Latest",
+        "overrides": []
+      },
+      "ec2Configuration": [
+        {
+          "imageType": "ECS_AL2023"
+        }
+      ]
+    },
+    "serviceRole": "arn:aws:iam::730883236839:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+    "containerOrchestrationType": "ECS",
+    "uuid": "fc98a704-2b99-388f-809d-95c7ef84e0e9"
+  }
+}

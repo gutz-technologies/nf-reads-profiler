@@ -1,0 +1,1 @@
+{"error": "\naws: [ERROR]: An error occurred (TargetCapacityLimitExceeded) when calling the GetSpotPlacementScores operation: The value for targetCapacity exceeds your limit on the amount of Spot placement target capacity you can explore. Reduce the targetCapacity value, and try again.\n"}

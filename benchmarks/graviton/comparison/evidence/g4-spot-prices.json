@@ -1,0 +1,12 @@
+{
+    "SpotPriceHistory": [
+        {
+            "AvailabilityZone": "us-east-2c",
+            "AvailabilityZoneId": "use2-az3",
+            "InstanceType": "m8g.metal-24xl",
+            "ProductDescription": "Linux/UNIX",
+            "SpotPrice": "0.430800",
+            "Timestamp": "2026-09-18T15:00:00+00:00"
+        }
+    ]
+}

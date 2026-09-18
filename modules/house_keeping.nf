@@ -77,13 +77,14 @@ process clean_reads {
 
   script:
   name = task.ext.name ?: "${meta.id}"
+  def reads_to_process = task.ext.reads_to_process != null ? task.ext.reads_to_process : params.nreads
   if (meta.single_end) {
     // println "Single ${name}"
     """
     fastp \\
     -i ${reads[0]} \\
     -o ${name}_trimmed.fq.gz \\
-    --reads_to_process ${params.nreads} \\
+    --reads_to_process ${reads_to_process} \\
     --dedup \\
     --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
@@ -99,7 +100,7 @@ process clean_reads {
     -I ${reads[1]} \\
     -o out.R1.fq.gz \\
     -O out.R2.fq.gz \\
-    --reads_to_process ${params.nreads} \\
+    --reads_to_process ${reads_to_process} \\
     --dedup \\
     --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
@@ -143,6 +144,5 @@ process MULTIQC {
   multiqc --config $multiqc_config . -f
   """
 }
-
 
 

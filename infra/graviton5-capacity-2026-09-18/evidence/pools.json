@@ -1,0 +1,36 @@
+{
+  "humann": [
+    "c9g.12xlarge",
+    "c9g.24xlarge",
+    "c9g.48xlarge",
+    "c9g.metal-48xl",
+    "c9gd.48xlarge",
+    "m9g.24xlarge",
+    "m9gd.metal-48xl",
+    "r9g.24xlarge",
+    "r9g.metal-48xl"
+  ],
+  "glue": [
+    "c9g.2xlarge",
+    "c9g.4xlarge",
+    "m9g.2xlarge",
+    "m9g.4xlarge"
+  ],
+  "medi": [
+    "m9gd.metal-48xl",
+    "r9gd.24xlarge",
+    "r9gd.metal-48xl"
+  ],
+  "metaphlan": [
+    "c9g.12xlarge",
+    "c9g.24xlarge",
+    "c9g.48xlarge",
+    "c9g.metal-48xl",
+    "c9gd.24xlarge",
+    "c9gd.48xlarge",
+    "m9g.24xlarge",
+    "m9gd.metal-48xl",
+    "r9g.24xlarge",
+    "r9g.metal-48xl"
+  ]
+}
