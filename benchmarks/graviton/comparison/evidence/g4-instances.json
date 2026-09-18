@@ -1,0 +1,121 @@
+{
+  "Reservations": [
+    {
+      "ReservationId": "r-0918c15ae7c998418",
+      "OwnerId": "730883236839",
+      "RequesterId": "932383652115",
+      "Groups": [],
+      "Instances": [
+        {
+          "Architecture": "arm64",
+          "BlockDeviceMappings": [],
+          "ClientToken": "fleet-1d1f6b84-d92c-4e3e-8430-2d8afa63d9d7-0",
+          "EbsOptimized": false,
+          "EnaSupport": true,
+          "Hypervisor": "xen",
+          "InstanceLifecycle": "spot",
+          "NetworkInterfaces": [],
+          "RootDeviceName": "/dev/xvda",
+          "RootDeviceType": "ebs",
+          "SecurityGroups": [],
+          "SpotInstanceRequestId": "sir-3dkqjpeq",
+          "StateReason": {
+            "Code": "Client.UserInitiatedShutdown",
+            "Message": "Client.UserInitiatedShutdown: User initiated shutdown"
+          },
+          "Tags": [
+            {
+              "Key": "Environment",
+              "Value": "development"
+            },
+            {
+              "Key": "aws:ec2launchtemplate:id",
+              "Value": "lt-0b0ef958f4b7d69e4"
+            },
+            {
+              "Key": "AWSBatchServiceTag",
+              "Value": "batch"
+            },
+            {
+              "Key": "Project",
+              "Value": "nf-reads-profiler"
+            },
+            {
+              "Key": "aws:autoscaling:groupName",
+              "Value": "AWSBatch-SpotHumannComputeEnviron-oxqAp0dDXiodwz5e-asg-f510464c-2ff3-38d1-a6ed-c051c3c4da6c"
+            },
+            {
+              "Key": "aws:ec2:fleet-id",
+              "Value": "fleet-1d1f6b84-d92c-4e3e-8430-2d8afa63d9d7"
+            },
+            {
+              "Key": "aws:ec2launchtemplate:version",
+              "Value": "1"
+            }
+          ],
+          "VirtualizationType": "hvm",
+          "CpuOptions": {
+            "CoreCount": 96,
+            "ThreadsPerCore": 1
+          },
+          "CapacityReservationSpecification": {
+            "CapacityReservationPreference": "open"
+          },
+          "HibernationOptions": {
+            "Configured": false
+          },
+          "MetadataOptions": {
+            "State": "pending",
+            "HttpTokens": "required",
+            "HttpPutResponseHopLimit": 2,
+            "HttpEndpoint": "enabled",
+            "HttpProtocolIpv6": "disabled",
+            "InstanceMetadataTags": "disabled"
+          },
+          "EnclaveOptions": {
+            "Enabled": false
+          },
+          "BootMode": "uefi",
+          "PlatformDetails": "Linux/UNIX",
+          "UsageOperation": "RunInstances",
+          "UsageOperationUpdateTime": "2026-09-18T16:15:32+00:00",
+          "MaintenanceOptions": {
+            "AutoRecovery": "default",
+            "RebootMigration": "default"
+          },
+          "CurrentInstanceBootMode": "uefi",
+          "NetworkPerformanceOptions": {
+            "BandwidthWeighting": "default"
+          },
+          "Operator": {
+            "Managed": false,
+            "HiddenByDefault": false
+          },
+          "SecondaryInterfaces": [],
+          "InstanceId": "i-035550f957f0d940c",
+          "ImageId": "ami-07f5bae824a09656d",
+          "State": {
+            "Code": 48,
+            "Name": "terminated"
+          },
+          "PrivateDnsName": "",
+          "PublicDnsName": "",
+          "StateTransitionReason": "User initiated (2026-09-18 16:49:09 GMT)",
+          "AmiLaunchIndex": 0,
+          "ProductCodes": [],
+          "InstanceType": "m8g.metal-24xl",
+          "LaunchTime": "2026-09-18T16:15:32+00:00",
+          "Placement": {
+            "AvailabilityZoneId": "use2-az3",
+            "GroupName": "",
+            "Tenancy": "default",
+            "AvailabilityZone": "us-east-2c"
+          },
+          "Monitoring": {
+            "State": "disabled"
+          }
+        }
+      ]
+    }
+  ]
+}

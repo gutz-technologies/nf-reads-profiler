@@ -1,0 +1,1174 @@
+{
+  "jobs": [
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/76ad75b7-7313-441e-8a7a-1c524cfee12d",
+      "jobName": "profile_taxa_7-690764-1-4_3m",
+      "jobId": "76ad75b7-7313-441e-8a7a-1c524cfee12d",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/8d3f60a26def40ec9ba5e5d4683f4a08",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/8d3f60a26def40ec9ba5e5d4683f4a08",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751501442,
+          "stoppedAt": 1789751676711,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299703,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751501442,
+      "stoppedAt": 1789751676711,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4:1",
+      "parameters": {
+        "nf-token": "30c2561a4adefc2f7995e78d4d953e93"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/metaphlan:4.2.4",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/45/7f89e9d1857070a1d1a47eb6300982/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/45/7f89e9d1857070a1d1a47eb6300982/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/8d3f60a26def40ec9ba5e5d4683f4a08",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/8d3f60a26def40ec9ba5e5d4683f4a08",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "36864",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 3600
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/079a5778-592b-496f-a8c9-d44bc8b86e4e",
+      "jobName": "profile_function_7-690764-1-4_100k",
+      "jobId": "079a5778-592b-496f-a8c9-d44bc8b86e4e",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/1946096e173b443594b545d1b376cdcc",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/1946096e173b443594b545d1b376cdcc",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751581366,
+          "stoppedAt": 1789751731544,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299730,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751581366,
+      "stoppedAt": 1789751731544,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3:1",
+      "parameters": {
+        "nf-token": "b53c26838e4d2a80813e774692080601"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/humann:4.0.3",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/27/b7aefc55ca9bcf58efd2fe0bc8fb6b/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/27/b7aefc55ca9bcf58efd2fe0bc8fb6b/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/1946096e173b443594b545d1b376cdcc",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/1946096e173b443594b545d1b376cdcc",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "25600",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 14400
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/64dad883-d7ac-4caa-bdae-6eaa0f5e1af0",
+      "jobName": "profile_taxa_7-690764-1-4_1m",
+      "jobId": "64dad883-d7ac-4caa-bdae-6eaa0f5e1af0",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/9faa6b895de44cbb8bd702adf57bd0e2",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/9faa6b895de44cbb8bd702adf57bd0e2",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751501448,
+          "stoppedAt": 1789751674860,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299729,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751501448,
+      "stoppedAt": 1789751674860,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4:1",
+      "parameters": {
+        "nf-token": "30c2561a4adefc2f7995e78d4d953e93"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/metaphlan:4.2.4",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/54/96d4321efc2ed079ae0d08a712f9fd/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/54/96d4321efc2ed079ae0d08a712f9fd/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/9faa6b895de44cbb8bd702adf57bd0e2",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/9faa6b895de44cbb8bd702adf57bd0e2",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "36864",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 3600
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/7fce7e22-ef31-484a-b0c4-21082aea47aa",
+      "jobName": "profile_function_7-690764-1-4_3m",
+      "jobId": "7fce7e22-ef31-484a-b0c4-21082aea47aa",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/58a3b317a9da4d1db275c3cd02a20c8b",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/58a3b317a9da4d1db275c3cd02a20c8b",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751581371,
+          "stoppedAt": 1789752111613,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299708,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751581371,
+      "stoppedAt": 1789752111613,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3:1",
+      "parameters": {
+        "nf-token": "b53c26838e4d2a80813e774692080601"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/humann:4.0.3",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/44/8956c0b11010800b5e820c62f917da/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/44/8956c0b11010800b5e820c62f917da/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/58a3b317a9da4d1db275c3cd02a20c8b",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/58a3b317a9da4d1db275c3cd02a20c8b",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "25600",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 14400
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/75cd456c-9d3c-4116-8429-c45fb41ddfaf",
+      "jobName": "profile_taxa_7-690764-1-4_100k",
+      "jobId": "75cd456c-9d3c-4116-8429-c45fb41ddfaf",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/35b5b38f521c46de8ebb1208c732890b",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/35b5b38f521c46de8ebb1208c732890b",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751501442,
+          "stoppedAt": 1789751643012,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299757,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751501442,
+      "stoppedAt": 1789751643012,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4:1",
+      "parameters": {
+        "nf-token": "30c2561a4adefc2f7995e78d4d953e93"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/metaphlan:4.2.4",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/df/1abf454d451cce2973436dfd5ca265/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/df/1abf454d451cce2973436dfd5ca265/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/35b5b38f521c46de8ebb1208c732890b",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/35b5b38f521c46de8ebb1208c732890b",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "36864",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 3600
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/4013e474-eb15-46dd-82fe-f5c7058a9729",
+      "jobName": "profile_function_7-690764-1-4_10m",
+      "jobId": "4013e474-eb15-46dd-82fe-f5c7058a9729",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/ff30870941864f379b86eeb55e5e69c6",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/ff30870941864f379b86eeb55e5e69c6",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751581369,
+          "stoppedAt": 1789752970199,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751309706,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751581369,
+      "stoppedAt": 1789752970199,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3:1",
+      "parameters": {
+        "nf-token": "b53c26838e4d2a80813e774692080601"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/humann:4.0.3",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/82/2e7c0ede4c411386389c7603858863/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/82/2e7c0ede4c411386389c7603858863/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/ff30870941864f379b86eeb55e5e69c6",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/ff30870941864f379b86eeb55e5e69c6",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "25600",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 14400
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/998e87e5-eab2-4654-88c1-7ff1f62a257f",
+      "jobName": "profile_taxa_7-690764-1-4_10m",
+      "jobId": "998e87e5-eab2-4654-88c1-7ff1f62a257f",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/14f0457adf9540a78d9181fe363d3049",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/14f0457adf9540a78d9181fe363d3049",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751501433,
+          "stoppedAt": 1789751769839,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751309689,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751501433,
+      "stoppedAt": 1789751769839,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4:1",
+      "parameters": {
+        "nf-token": "30c2561a4adefc2f7995e78d4d953e93"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/metaphlan:4.2.4",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/0b/0ce7d751331f51e30afb548b97be4a/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/0b/0ce7d751331f51e30afb548b97be4a/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/14f0457adf9540a78d9181fe363d3049",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/14f0457adf9540a78d9181fe363d3049",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "36864",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 3600
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/5d608057-5e2a-48f7-ad83-59e0e1c2c55b",
+      "jobName": "profile_function_7-690764-1-4_300k",
+      "jobId": "5d608057-5e2a-48f7-ad83-59e0e1c2c55b",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/32d1289017f84167ac2f4bcd7543e12e",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/32d1289017f84167ac2f4bcd7543e12e",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751581374,
+          "stoppedAt": 1789751772332,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751289869,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751581374,
+      "stoppedAt": 1789751772332,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3:1",
+      "parameters": {
+        "nf-token": "b53c26838e4d2a80813e774692080601"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/humann:4.0.3",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/b4/4ea4299bbe9ad77f60e150f245cf13/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/b4/4ea4299bbe9ad77f60e150f245cf13/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/32d1289017f84167ac2f4bcd7543e12e",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/32d1289017f84167ac2f4bcd7543e12e",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "25600",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 14400
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/32c59c31-6bdb-412e-b0c9-44bf85580ef4",
+      "jobName": "profile_function_7-690764-1-4_1m",
+      "jobId": "32c59c31-6bdb-412e-b0c9-44bf85580ef4",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-humann-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/7b44d7ba4e244014baea434dfec1afb2",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/7b44d7ba4e244014baea434dfec1afb2",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751581368,
+          "stoppedAt": 1789751855262,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751299733,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751581368,
+      "stoppedAt": 1789751855262,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3:1",
+      "parameters": {
+        "nf-token": "b53c26838e4d2a80813e774692080601"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/humann:4.0.3",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/97/956d9a6172b7d5fd96c3634f0b4332/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/97/956d9a6172b7d5fd96c3634f0b4332/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/bd1696bb48644a799f055ef0f37860f5",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-humann-g5-1c1ecf34-4464-36fb-a3bf-1dc3e9473211/7b44d7ba4e244014baea434dfec1afb2",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-humann-4-0-3/default/7b44d7ba4e244014baea434dfec1afb2",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "25600",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 14400
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    },
+    {
+      "jobArn": "arn:aws:batch:us-east-2:730883236839:job/e94d655b-8fbf-4ecc-98ed-bec099adbb02",
+      "jobName": "profile_taxa_7-690764-1-4_300k",
+      "jobId": "e94d655b-8fbf-4ecc-98ed-bec099adbb02",
+      "jobQueue": "arn:aws:batch:us-east-2:730883236839:job-queue/spot-metaphlan-g5",
+      "status": "SUCCEEDED",
+      "attempts": [
+        {
+          "container": {
+            "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+            "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/cebd3dbc83704899be7b6c41ce65e735",
+            "exitCode": 0,
+            "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/cebd3dbc83704899be7b6c41ce65e735",
+            "networkInterfaces": []
+          },
+          "startedAt": 1789751501444,
+          "stoppedAt": 1789751657752,
+          "statusReason": "Essential container in task exited"
+        }
+      ],
+      "statusReason": "Essential container in task exited",
+      "createdAt": 1789751289827,
+      "retryStrategy": {
+        "attempts": 5,
+        "evaluateOnExit": [
+          {
+            "onStatusReason": "Host EC2*",
+            "action": "retry"
+          },
+          {
+            "onReason": "*",
+            "action": "exit"
+          }
+        ]
+      },
+      "startedAt": 1789751501444,
+      "stoppedAt": 1789751657752,
+      "dependsOn": [],
+      "jobDefinition": "arn:aws:batch:us-east-2:730883236839:job-definition/nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4:1",
+      "parameters": {
+        "nf-token": "30c2561a4adefc2f7995e78d4d953e93"
+      },
+      "container": {
+        "image": "730883236839.dkr.ecr.us-east-2.amazonaws.com/metaphlan:4.2.4",
+        "command": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "trap \"[[ -n \\$pid ]] && kill -TERM \\$pid\" TERM; trap \"{ ret=$?; /opt/conda-aws/bin/aws s3 cp --only-show-errors .command.log s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/c2/51fa6f9c0ee3ef5b02d9aa8c668909/.command.log||true; exit $ret; }\" EXIT; /opt/conda-aws/bin/aws s3 cp --only-show-errors s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/c2/51fa6f9c0ee3ef5b02d9aa8c668909/.command.run - | bash > >(tee .command.log) 2>&1 & pid=$!; wait $pid"
+        ],
+        "jobRoleArn": "arn:aws:iam::730883236839:role/nf-reads-profiler-batch-job-role",
+        "volumes": [
+          {
+            "host": {
+              "sourcePath": "/opt/conda-aws"
+            },
+            "name": "aws-cli"
+          },
+          {
+            "host": {
+              "sourcePath": "/mnt/dbs"
+            },
+            "name": "vol-1"
+          }
+        ],
+        "environment": [
+          {
+            "name": "AWS_MAX_ATTEMPTS",
+            "value": "100"
+          },
+          {
+            "name": "AWS_RETRY_MODE",
+            "value": "standard"
+          },
+          {
+            "name": "AWS_METADATA_SERVICE_NUM_ATTEMPTS",
+            "value": "100"
+          }
+        ],
+        "mountPoints": [
+          {
+            "containerPath": "/opt/conda-aws",
+            "readOnly": true,
+            "sourceVolume": "aws-cli"
+          },
+          {
+            "containerPath": "/mnt/dbs",
+            "readOnly": false,
+            "sourceVolume": "vol-1"
+          }
+        ],
+        "ulimits": [],
+        "exitCode": 0,
+        "containerInstanceArn": "arn:aws:ecs:us-east-2:730883236839:container-instance/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/1f7fa5b44bdd4d0d9436a4323c05be39",
+        "taskArn": "arn:aws:ecs:us-east-2:730883236839:task/AWSBatch-spot-metaphlan-g5-44ae6247-2665-346b-b23c-f6b921244ce6/cebd3dbc83704899be7b6c41ce65e735",
+        "logStreamName": "nf-730883236839-dkr-ecr-us-east-2-amazonaws-com-metaphlan-4-2-4/default/cebd3dbc83704899be7b6c41ce65e735",
+        "networkInterfaces": [],
+        "resourceRequirements": [
+          {
+            "value": "36864",
+            "type": "MEMORY"
+          },
+          {
+            "value": "16",
+            "type": "VCPU"
+          }
+        ],
+        "secrets": []
+      },
+      "timeout": {
+        "attemptDurationSeconds": 3600
+      },
+      "tags": {},
+      "platformCapabilities": [],
+      "eksAttempts": []
+    }
+  ]
+}

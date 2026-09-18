@@ -1,0 +1,61 @@
+[
+  {
+    "CreateTime": "2026-09-18T16:15:38+00:00",
+    "InstanceId": "i-0d6f195921644a5d1",
+    "LaunchSpecification": {
+      "BlockDeviceMappings": [
+        {
+          "Ebs": {
+            "DeleteOnTermination": true,
+            "Iops": 9000,
+            "VolumeSize": 200,
+            "VolumeType": "gp3",
+            "Throughput": 1000,
+            "Encrypted": true
+          },
+          "DeviceName": "/dev/xvda"
+        }
+      ],
+      "IamInstanceProfile": {
+        "Arn": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile"
+      },
+      "ImageId": "ami-01072f6f8844e1659",
+      "InstanceType": "m8g.metal-24xl",
+      "NetworkInterfaces": [
+        {
+          "DeleteOnTermination": true,
+          "DeviceIndex": 0,
+          "SubnetId": "subnet-09159c654acc505a3"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "us-east-2c",
+        "Tenancy": "default",
+        "AvailabilityZoneId": "use2-az3"
+      },
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-02b677b54c23dcc2c",
+          "GroupName": "nf-reads-profiler-batch-compute-sg"
+        }
+      ],
+      "Monitoring": {
+        "Enabled": false
+      }
+    },
+    "LaunchedAvailabilityZone": "us-east-2c",
+    "LaunchedAvailabilityZoneId": "use2-az3",
+    "ProductDescription": "Linux/UNIX",
+    "SpotInstanceRequestId": "sir-9m9qkcgp",
+    "SpotPrice": "1.907520",
+    "State": "closed",
+    "Status": {
+      "Code": "instance-terminated-by-user",
+      "Message": "Spot Instance terminated due to user-initiated termination.",
+      "UpdateTime": "2026-09-18T16:29:19+00:00"
+    },
+    "Tags": [],
+    "Type": "one-time",
+    "InstanceInterruptionBehavior": "terminate"
+  }
+]

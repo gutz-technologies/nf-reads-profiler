@@ -1,0 +1,72 @@
+{
+  "reports_scanned": 34,
+  "unique_attempts": 3496,
+  "groups": [
+    {
+      "cohort": "cosmosid-infant",
+      "accuracy": "3 (default)",
+      "tasks": 1898,
+      "samples": 1898,
+      "min": 4.147956848144531,
+      "median": 4.166875839233398,
+      "p95": 4.1969757080078125,
+      "max": 4.2053680419921875,
+      "requested_gib": [
+        8.0
+      ]
+    },
+    {
+      "cohort": "gemma",
+      "accuracy": "3",
+      "tasks": 1353,
+      "samples": 1349,
+      "min": 4.179386138916016,
+      "median": 4.241432189941406,
+      "p95": 4.2636871337890625,
+      "max": 4.278499603271484,
+      "requested_gib": [
+        8.0,
+        16.0
+      ]
+    },
+    {
+      "cohort": "gemma-smoke",
+      "accuracy": "3",
+      "tasks": 6,
+      "samples": 6,
+      "min": 4.229282379150391,
+      "median": 4.23857307434082,
+      "p95": 4.245887756347656,
+      "max": 4.250659942626953,
+      "requested_gib": [
+        8.0
+      ]
+    },
+    {
+      "cohort": "gemma-smoke",
+      "accuracy": "6",
+      "tasks": 3,
+      "samples": 3,
+      "min": 32.22057342529297,
+      "median": 32.22127914428711,
+      "p95": 32.22127914428711,
+      "max": 32.243186950683594,
+      "requested_gib": [
+        40.0
+      ]
+    },
+    {
+      "cohort": "null",
+      "accuracy": "3 (default)",
+      "tasks": 200,
+      "samples": 200,
+      "min": 4.160575866699219,
+      "median": 4.1987762451171875,
+      "p95": 4.208213806152344,
+      "max": 4.211143493652344,
+      "requested_gib": [
+        8.0
+      ]
+    }
+  ]
+}

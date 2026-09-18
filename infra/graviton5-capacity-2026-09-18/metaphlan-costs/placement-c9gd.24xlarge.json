@@ -1,0 +1,4 @@
+{
+  "error": "aws: [ERROR]: An error occurred (MaxConfigLimitExceeded) when calling the GetSpotPlacementScores operation: You\u2019ve exceeded your maximum allowed Spot placement configurations. You can retry configurations that you used within the last 24 hours, or wait for 24 hours before specifying a new configuration.",
+  "returncode": 254
+}

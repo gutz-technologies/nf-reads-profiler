@@ -1,0 +1,52 @@
+[
+  {
+    "name": "profile_taxa (7-690764-1-4_300k)",
+    "native_id": "e94d655b-8fbf-4ecc-98ed-bec099adbb02",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/c2/51fa6f9c0ee3ef5b02d9aa8c668909"
+  },
+  {
+    "name": "profile_function (7-690764-1-4_300k)",
+    "native_id": "5d608057-5e2a-48f7-ad83-59e0e1c2c55b",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/b4/4ea4299bbe9ad77f60e150f245cf13"
+  },
+  {
+    "name": "profile_taxa (7-690764-1-4_3m)",
+    "native_id": "76ad75b7-7313-441e-8a7a-1c524cfee12d",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/45/7f89e9d1857070a1d1a47eb6300982"
+  },
+  {
+    "name": "profile_function (7-690764-1-4_3m)",
+    "native_id": "7fce7e22-ef31-484a-b0c4-21082aea47aa",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/44/8956c0b11010800b5e820c62f917da"
+  },
+  {
+    "name": "profile_taxa (7-690764-1-4_1m)",
+    "native_id": "64dad883-d7ac-4caa-bdae-6eaa0f5e1af0",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/54/96d4321efc2ed079ae0d08a712f9fd"
+  },
+  {
+    "name": "profile_function (7-690764-1-4_100k)",
+    "native_id": "079a5778-592b-496f-a8c9-d44bc8b86e4e",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/27/b7aefc55ca9bcf58efd2fe0bc8fb6b"
+  },
+  {
+    "name": "profile_function (7-690764-1-4_1m)",
+    "native_id": "32c59c31-6bdb-412e-b0c9-44bf85580ef4",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/97/956d9a6172b7d5fd96c3634f0b4332"
+  },
+  {
+    "name": "profile_taxa (7-690764-1-4_100k)",
+    "native_id": "75cd456c-9d3c-4116-8429-c45fb41ddfaf",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/df/1abf454d451cce2973436dfd5ca265"
+  },
+  {
+    "name": "profile_taxa (7-690764-1-4_10m)",
+    "native_id": "998e87e5-eab2-4654-88c1-7ff1f62a257f",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/0b/0ce7d751331f51e30afb548b97be4a"
+  },
+  {
+    "name": "profile_function (7-690764-1-4_10m)",
+    "native_id": "4013e474-eb15-46dd-82fe-f5c7058a9729",
+    "workdir": "s3://gutz-nf-reads-profilers-workdir/benchmarks/graviton-benchmark-g5-20260918/82/2e7c0ede4c411386389c7603858863"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-09-18T15:30:59.458696+00:00",
+  "command": [
+    "aws",
+    "ec2",
+    "get-spot-placement-scores",
+    "--region",
+    "us-east-2",
+    "--region-names",
+    "us-east-2",
+    "--instance-types",
+    "c8g.metal-48xl",
+    "--target-capacity",
+    "10",
+    "--target-capacity-unit-type",
+    "units",
+    "--output",
+    "json"
+  ],
+  "exit_code": 254,
+  "response": null,
+  "error": "aws: [ERROR]: An error occurred (MaxConfigLimitExceeded) when calling the GetSpotPlacementScores operation: You\u2019ve exceeded your maximum allowed Spot placement configurations. You can retry configurations that you used within the last 24 hours, or wait for 24 hours before specifying a new configuration."
+}

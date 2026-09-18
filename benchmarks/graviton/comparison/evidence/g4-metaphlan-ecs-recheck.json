@@ -1,0 +1,9 @@
+{
+    "containerInstances": [],
+    "failures": [
+        {
+            "arn": "arn:aws:ecs:us-east-2:730883236839:container-instance/bb53058bfdd3406e93e8c837d19748a8",
+            "reason": "MISSING"
+        }
+    ]
+}

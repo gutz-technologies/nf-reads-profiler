@@ -1,0 +1,46 @@
+{
+  "computeEnvironmentName": "spot-metaphlan-g5",
+  "type": "MANAGED",
+  "state": "ENABLED",
+  "computeResources": {
+    "type": "SPOT",
+    "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
+    "minvCpus": 0,
+    "maxvCpus": 200,
+    "desiredvCpus": 0,
+    "instanceTypes": [
+      "c9g.24xlarge",
+      "c9g.48xlarge",
+      "m9gd.metal-48xl"
+    ],
+    "subnets": [
+      "subnet-09159c654acc505a3",
+      "subnet-03afe111356916511",
+      "subnet-0d0f1d152c1656677"
+    ],
+    "securityGroupIds": [
+      "sg-02b677b54c23dcc2c"
+    ],
+    "instanceRole": "arn:aws:iam::730883236839:instance-profile/nf-reads-profiler-ecs-instance-profile",
+    "tags": {
+      "Project": "nf-reads-profiler",
+      "Environment": "graviton5-test"
+    },
+    "bidPercentage": 50,
+    "spotIamFleetRole": "arn:aws:iam::730883236839:role/nf-reads-profiler-spot-fleet-role",
+    "launchTemplate": {
+      "launchTemplateId": "lt-0764d7c0d6cfc0706",
+      "version": "6"
+    },
+    "ec2Configuration": [
+      {
+        "imageType": "ECS_AL2023"
+      }
+    ]
+  },
+  "serviceRole": "arn:aws:iam::730883236839:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+  "tags": {
+    "Project": "nf-reads-profiler",
+    "Environment": "graviton5-test"
+  }
+}

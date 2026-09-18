@@ -1,0 +1,38 @@
+[
+    {
+        "InstanceId": "i-0c85d6ecbdb08bac8",
+        "InstanceType": "r8g.2xlarge",
+        "State": "running",
+        "Tags": null
+    },
+    {
+        "InstanceId": "i-0bb79f374becf8b73",
+        "InstanceType": "t4g.xlarge",
+        "State": "running",
+        "Tags": [
+            {
+                "Key": "delete-after",
+                "Value": "CONFERENCE-END-DATE"
+            },
+            {
+                "Key": "lifecycle",
+                "Value": "throwaway"
+            },
+            {
+                "Key": "Name",
+                "Value": "conference-vm"
+            }
+        ]
+    },
+    {
+        "InstanceId": "i-0fd6b261056757682",
+        "InstanceType": "r7i.4xlarge",
+        "State": "stopped",
+        "Tags": [
+            {
+                "Key": "Name",
+                "Value": "emperor_zarr"
+            }
+        ]
+    }
+]
