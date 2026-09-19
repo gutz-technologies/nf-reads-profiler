@@ -1,0 +1,24 @@
+{
+  "requestedAtUtc": "2026-09-19T03:02:37Z",
+  "request": {
+    "service": "ec2",
+    "operation": "get-spot-placement-scores",
+    "region": "us-east-2",
+    "instanceTypes": [
+      "c9g.24xlarge",
+      "c9g.48xlarge",
+      "c9g.metal-48xl"
+    ],
+    "targetCapacity": 5,
+    "targetCapacityUnitType": "units",
+    "regionNames": [
+      "us-east-2"
+    ]
+  },
+  "result": {
+    "status": "MaxConfigLimitExceeded",
+    "spotPlacementScores": [],
+    "message": "You’ve exceeded your maximum allowed Spot placement configurations. You can retry configurations that you used within the last 24 hours, or wait for 24 hours before specifying a new configuration."
+  },
+  "interpretation": "No score was returned. Do not retry this new configuration until the account's 24-hour distinct-configuration window has reset."
+}
