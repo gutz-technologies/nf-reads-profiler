@@ -16,3 +16,16 @@ test-out/
 logs/
 monkey-hand/
 pull_requests/
+
+# Local production logs: preserve on disk for resume/auditing.
+/teddy-*.nextflow.log*
+/teddy-*.launch.out
+/*-cleanup.out
+
+# Generated benchmark execution evidence (kept locally).
+/benchmarks/graviton/execution/
+/benchmarks/graviton/preflight/
+/benchmarks/fastp-one-vcpu/*.log
+/benchmarks/fastp-one-vcpu/report.html
+/benchmarks/fastp-one-vcpu/trace.tsv
+/benchmarks/fastp-one-vcpu/effective.config

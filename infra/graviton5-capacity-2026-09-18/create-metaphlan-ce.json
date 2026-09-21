@@ -6,7 +6,7 @@
     "type": "SPOT",
     "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
     "minvCpus": 0,
-    "maxvCpus": 200,
+    "maxvCpus": 300,
     "desiredvCpus": 0,
     "instanceTypes": [
       "c9g.24xlarge",
