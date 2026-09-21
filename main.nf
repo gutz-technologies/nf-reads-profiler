@@ -34,6 +34,7 @@ nf-reads-profiler - Version: ${workflow.manifest.version}
     --enable_medi        <true|false>  run MEDI food-microbiome quantification (default: false; requires enable_humann)
     --enable_strainphlan <true|false>  emit MetaPhlAn SAM and run StrainPhlAn (default: false; incompatible with skipCompleted)
     --strainphlan_clades csv           clades to build strain trees for (empty = stop after print_clades)
+    --skip_combine       <true|false>  skip MetaPhlAn/HUMAnN cohort tables and BIOMs; MEDI unchanged (default: false)
     --skipCompleted      <true|false>  skip samples whose HUMAnN4 outputs already exist (default: true)
     --nreads             int           subsample cap per sample (default: 32000000)
     --minreads           int           floor; samples below this are dropped, not failed (default: 100000)
@@ -89,7 +90,7 @@ def output_exists(meta) {
   def name = meta.id
   def base = "${params.outdir}/${params.project}/${run}"
 
-  // MetaPhlAn combine always runs — needs the per-sample biom.
+  // Retain the per-sample MetaPhlAn BIOM for delivery and optional combining.
   if (!file("${base}/taxa/${name}_metaphlan.biom").exists()) { return false }
 
   // HUMAnN combines (skipped when !enable_humann) need all four per-sample tables,
@@ -233,6 +234,9 @@ workflow {
   // Functional profiling (HUMAnN4) if not skipped
   if ( params.enable_humann ) {
     profile_function(merged_reads)
+  }
+
+  if (params.enable_humann && !params.skip_combine) {
 
     ch_genefamilies = profile_function.out.profile_function_gf
                 .map { meta, table -> [ [run: meta.run, type: 'genefamilies'], table ] }
@@ -274,13 +278,16 @@ workflow {
   }
 
 
-  // Metaphlan
-  ch_metaphlan = profile_taxa.out.to_profile_function_bugs
-            .map { meta, table -> [ [run: meta.run], table ] }
-            .mix( skipReinject(input_ch.skip, null, 'taxa', '_metaphlan.biom') )
-            .groupTuple()
+  if (!params.skip_combine) {
+    // Metaphlan
+    ch_metaphlan = profile_taxa.out.to_profile_function_bugs
+              .map { meta, table -> [ [run: meta.run], table ] }
+              .mix( skipReinject(input_ch.skip, null, 'taxa', '_metaphlan.biom') )
+              .groupTuple()
 
-  combine_metaphlan_tables(ch_metaphlan)
+    combine_metaphlan_tables(ch_metaphlan)
+
+  }
 
   // Strain-level profiling (StrainPhlAn) from the per-sample MetaPhlAn SAMs.
   // profile_taxa only emits SAM when enable_strainphlan=true.
@@ -362,7 +369,7 @@ workflow {
   }
 
   // Split stratified tables for biom files
-  if (params.enable_humann) {
+  if (params.enable_humann && !params.skip_combine) {
 
     
 

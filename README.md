@@ -68,9 +68,10 @@ process or the screen session. Nextflow's SIGINT handler does a graceful
 abort: it terminates any in-flight AWS Batch jobs itself (no manual
 `aws batch terminate-job` needed), flushes the execution report/trace, and
 writes `Execution complete -- Goodbye` to `.nextflow.log` — the same clean
-exit as a normal finish. Since `.nextflow.log` lives on S3 workDir for AWS
-runs (no local tail -f), this is the only way to get a legible, complete log
-instead of an abrupt cutoff. Verified 2026-08-17 on the gemma under8g run
+exit as a normal finish. The driver log stays local even when task `workDir`
+is on S3; use `nextflow -log /local/path/run.nextflow.log run ...` to choose
+its location. Graceful cancellation flushes that log instead of leaving an
+abrupt cutoff. Verified 2026-08-17 on the gemma under8g run
 (stuck on an unschedulable `combine_humann_tables` job): SIGINT → job
 terminated → report saved → clean Goodbye, all within ~5s.
 
@@ -82,6 +83,27 @@ Profile-to-config mapping (`nextflow.config`):
 - `azure` → `conf/azurebatch.config`
 - `test` → `conf/test.config` (local Docker, tiny `nreads`/`minreads`)
 - `test_medi` → `conf/test_medi.config` (extends `test`; enables MEDI, sets ssddbs paths, disables cleanup)
+
+### Summarizing driver logs
+
+`bin/scrape_last_local_log.sh` selects the most recently modified `.nextflow.log`
+or `*.nextflow.log` in the current directory. This supports standard local runs
+and AWS runs with local driver logging and S3 task work directories. The selected
+source is printed; pass an explicit path when monitoring a particular run:
+
+```bash
+bin/scrape_last_local_log.sh teddy-srp154926.nextflow.log
+bin/scrape_last_local_log.sh /path/to/.nextflow.log
+bin/scrape_last_local_log.sh s3://bucket/path/run.nextflow.log
+cat /path/to/run.nextflow.log | bin/scrape_last_local_log.sh -
+```
+
+Each invocation reads a snapshot. Stdin must reach EOF; do not pipe `tail -f`
+into it. S3 input needs AWS CLI read access. Use the DEBUG driver log, not console
+or tee output. Counts describe logged task attempts, including retries, rather
+than unique samples. **Pending includes queued, starting, and running tasks**;
+the script does not query AWS or verify driver liveness. Rotated or partial logs
+can omit events, so use the complete driver log when available.
 
 ### Detecting when a run has ended
 
@@ -184,3 +206,12 @@ Staging paths differ per profile:
   S3 to `/mnt/dbs/` at boot on the thin stock AMI (no baked DBs). The
   `spot-metaphlan` queue copies vJan25 from S3 (see
   `infra/multiqueue-design.md`).
+
+### Per-sample delivery without cohort merges
+
+Pass `--skip_combine` (or set `params.skip_combine = true`) to retain per-sample
+MetaPhlAn BIOM/TSV and HUMAnN TSV outputs without cohort-wide MetaPhlAn/HUMAnN
+merges, stratified-table splitting, combined BIOM conversion, or HUMAnN regrouping.
+The default is `false`, preserving the existing combined outputs. This does not
+create per-subject files or per-sample HUMAnN BIOMs. MEDI aggregation and food
+quantification are unchanged. Existing combined files are not deleted on resume.
