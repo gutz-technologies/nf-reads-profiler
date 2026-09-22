@@ -114,6 +114,7 @@ Queue allocation for the complete phases:
 | G4 | `spot-humann` | 3,610 | $144.865528 | $0.040129 |
 | G5 | `spot-metaphlan` | 9,957 | $106.219179 | $0.010668 |
 | G5 | `spot-humann` | 9,603 | $304.546762 | $0.031714 |
+| G4 follow-on | `spot-medi` | 13,181 | $26.307124 | $0.001996 |
 
 The queue totals reconcile to the billed fleet totals. G5 uses known
 instance-type lifetimes for the stable fleet and measured ASG hours for its
@@ -121,15 +122,24 @@ short-lived replacements. Historical G4 instance types are no longer exposed;
 its billed total is allocated in proportion to measured queue ASG
 instance-hours (203.941 HUMAnN and 50.037 MetaPhlAn). Treat the G4 queue split
 as an allocation of a real billed total, not direct queue-tagged billing.
+MEDI is shown separately because it ran after the profiler comparison. Its
+`r8gd.24xlarge` charges were $17.776507 on Sep 21 and $8.530617 on Sep 22.
+Total profiler plus MEDI EC2 compute was $617.481382: $180.408316 for G4
+profilers, $410.765941 for G5 profilers, and $26.307124 for MEDI.
 
 The controlled speed comparison remains Sep 19 versus Sep 20, 02:00-14:00 UTC
 (Sep 18 10 PM-Sep 19 10 AM EDT versus Sep 19 10 PM-Sep 20 10 AM EDT):
 
-| Profiler | G4 outputs | G5 outputs | Change |
-|---|---:|---:|---:|
-| MetaPhlAn | 1,730 | 2,894 | +67.3% |
-| HUMAnN4 | 2,378 | 2,654 | +11.6% |
-| **Both** | **4,108** | **5,548** | **+35.1%** |
+| Profiler | G4 outputs | G5 outputs | Raw change | G4 concurrent jobs | G5 concurrent jobs | Capacity-normalized change |
+|---|---:|---:|---:|---:|---:|---:|
+| MetaPhlAn | 1,730 | 2,894 | +67.3% | 10 (160 vCPUs) | 15 (240 vCPUs) | +11.5% per job slot |
+| HUMAnN4 | 2,378 | 2,654 | +11.6% | not normalized here | not normalized here | not calculated |
+| **Both** | **4,108** | **5,548** | **+35.1%** | mixed | mixed | not meaningful combined |
+
+MetaPhlAn completed 14.42 samples per job-slot-hour on G4 and 16.08 on G5.
+Thus most of its raw +67.3% fleet throughput came from running 50% more jobs;
+the G5 speed gain at equal concurrency was 11.5%. The combined raw row should
+not be interpreted as a capacity-normalized architecture comparison.
 
 Hourly Cost Explorer is not enabled, so AWS does not expose billed spend for
 those exact 12-hour windows. A cost-per-output claim for the morning comparison
