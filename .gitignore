@@ -25,6 +25,7 @@ pull_requests/
 # Generated benchmark execution evidence (kept locally).
 /benchmarks/graviton/execution/
 /benchmarks/graviton/preflight/
+/infra/graviton5-capacity-*/evidence/
 /benchmarks/fastp-one-vcpu/*.log
 /benchmarks/fastp-one-vcpu/report.html
 /benchmarks/fastp-one-vcpu/trace.tsv

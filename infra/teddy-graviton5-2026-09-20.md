@@ -34,7 +34,8 @@ strategy; 64 is the configured short-pool maximum, not an absolute fleet cap.
 
 Resume TEDDY with its existing config and
 `-resume 75489d52-e5bc-45b5-bd46-1f68f41aea76` from the recorded checkout.
-Do not apply `conf/aws_batch_g5.config`: it also changes short-job routing.
+The temporary G5 benchmark overlay was not used because it also changed
+short-job routing. That overlay has since been removed.
 All reads retained; MEDI off for this pass, StrainPhlAn off. Later re-enable
 MEDI and resume the same full cohort, preserving cache and S3 work.
 No restart performed here.
@@ -45,7 +46,8 @@ Raised live `spot-metaphlan-g5` max vCPUs from 200 to 300 while TEDDY runs.
 Bid remains 50%. This scaling update does not require worker replacement or
 Nextflow restart. Batch can add capacity as demand and Spot availability permit.
 
-Deployment inputs match: `graviton5-capacity-2026-09-18/create-metaphlan-ce.json`
+The deployed settings were captured in the run record; the temporary CE
+creation payload was removed after the benchmark.
 now specifies 300; `batch-stack.yaml` defaults `MaxvCPUsMetaphlan` to 300 for
 its legacy CE. CloudFormation does not manage the production G5 CE. Reapply its
 capacity independently when needed:

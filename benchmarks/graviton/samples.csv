@@ -1,6 +1,0 @@
-sample,fastq_1,fastq_2,sra_accession,study_accession
-7-690764-1-4_100k,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_1.fastq.gz,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_2.fastq.gz,,benchmark
-7-690764-1-4_300k,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_1.fastq.gz,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_2.fastq.gz,,benchmark
-7-690764-1-4_1m,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_1.fastq.gz,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_2.fastq.gz,,benchmark
-7-690764-1-4_3m,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_1.fastq.gz,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_2.fastq.gz,,benchmark
-7-690764-1-4_10m,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_1.fastq.gz,s3://gutz-data-globus/kneaddata_infant_cosmosID_out/kneaddata_final_out/7-690764-1-4_R1_kneaddata_paired_2.fastq.gz,,benchmark

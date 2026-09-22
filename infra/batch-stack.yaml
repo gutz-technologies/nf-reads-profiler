@@ -1102,8 +1102,9 @@ Resources:
         InstanceRole: !GetAtt EcsInstanceProfile.Arn
         SpotIamFleetRole: !GetAtt SpotFleetRole.Arn
         InstanceTypes:
-          - r9gd.24xlarge # G5 always cheaper on spot than r9gd.16xlarge
-          - r8gd.24xlarge # G4 depth
+          - r9gd.16xlarge # G5
+          - r9gd.24xlarge # G5 sometimes cheaper than r9gd.16xlarge
+          - r8gd.16xlarge # G4
         LaunchTemplate:
           LaunchTemplateId: !Ref MediWorkerLaunchTemplate
           Version: $Latest

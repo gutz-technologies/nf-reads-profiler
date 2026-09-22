@@ -181,7 +181,7 @@ creation, or on the G4 CEs only between runs.
 5. `cfn-lint infra/*.yaml` after any CFN edits.
 6. Baseline: reuse the existing gemma-smoke slice (7 under8g + 3 over8g,
    same samplesheet, same `conf/gemma.config` mem ladder), routed via a new
-   `-profile aws_g5` / `conf/aws_batch_g5.config` overlay that only swaps
+   the temporary G5 routing overlay that swapped
    queue names. Compare against the recorded G4 smoke result (7/9 under8g,
    3/3 over8g, `40GB attempt-1 / 60GB attempt-2` ladder — see
    `project_gemma_pipeline_status` memory).

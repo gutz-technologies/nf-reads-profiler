@@ -29,7 +29,7 @@ AWS API documentation warns that one or two types, or variations of one type, al
 
 Two CEs and two dedicated queues: `spot-humann-g5` and `spot-metaphlan-g5`. Final state: disabled; CE minimum and desired capacity zero. AWS required ENABLED at creation; each CE was created without a queue and disabled immediately after becoming VALID. No benchmark jobs submitted.
 
-Cloned live roles, subnets, security groups, SPOT_PRICE_CAPACITY_OPTIMIZED, 50% bid setting, AMI, and boot configuration. Launch templates pinned to existing version 6. Maximums preserved: HUMAnN 960 vCPU; MetaPhlAn 200 vCPU. Resources were created with the Batch API, outside the production CloudFormation stack. Creation payloads are retained alongside this report.
+Cloned live roles, subnets, security groups, SPOT_PRICE_CAPACITY_OPTIMIZED, 50% bid setting, AMI, and boot configuration. Launch templates pinned to existing version 6. Maximums preserved: HUMAnN 960 vCPU; MetaPhlAn 200 vCPU. Resources were created with the Batch API, outside the production CloudFormation stack. The temporary creation payloads and raw API snapshots were removed after their findings were summarized here.
 
 Instance mapping: 8g → 9g where offered; metal-24xl → 24xlarge where no matching metal size exists. Unsupported c8gn and x8g equivalents omitted. This is a profiling test pool, not an equivalent replacement for all high-memory StrainPhlAn workloads.
 
@@ -58,7 +58,9 @@ USD per instance-hour, Linux/UNIX. Latest returned sample per type/AZ. Prices al
 The agreed 100k–10m CosmosID infant comparison is documented in the
 [Graviton4 versus Graviton5 benchmark plan](../graviton4-vs-graviton5-benchmark-plan.md).
 
-Apply `-c conf/aws_batch_g5.config` after the existing AWS and run configuration. It only changes profile_function/profile_taxa queue names, preserving MEDI and other routing. Enable the two test CEs and queues before running.
+The temporary `conf/aws_batch_g5.config` routing overlay was removed after the
+benchmark. Production queue routing now belongs in `infra/batch-stack.yaml` and
+the normal AWS configuration.
 
 Use five reads_to_process settings (100k, 300k, 1m, 3m, 10m) on the same source sample: one G4 run and one G5 run, ten sample cases total. Keep software and task resources the same. Report profiler runtime speedup and cost savings from the billing dashboard. The linked simplified plan supersedes the earlier replicate/cold-warm design. No speedup or cost saving has yet been measured.
 

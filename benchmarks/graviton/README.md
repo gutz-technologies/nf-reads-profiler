@@ -15,14 +15,9 @@ Five caps per run: 100k, 300k, 1m, 3m, 10m. Same paired source sample
 18,520,758 R1 reads (read on 2026-09-18); each run also executes count_reads.
 The caps use fastp reads_to_process, not post-filtered read counts.
 
-From the repository root, in screen/tmux, run G4 then G5:
-
-```bash
-bash benchmarks/graviton/run-g4.sh
-bash benchmarks/graviton/run-g5.sh
-```
-
-Do not add `-resume`. Only start G5 after G4 finishes. Both runs execute
+The one-off G4/G5 launch scripts and configs were removed after the benchmark
+completed. The retained reports and normalized result tables are the durable
+record of the comparison. Both runs executed
 profile_taxa and profile_function, plus normal cleaning/reporting. MEDI and
 StrainPhlAn are disabled. Each profiler retains its existing process-specific
 CE pair. G5 small glue jobs (count_reads, get_software_versions, MULTIQC,
@@ -74,15 +69,10 @@ inputs and the ordinary params.nreads fallback. This checks wiring, not real
 fastp output or AWS execution. Both source S3 objects were readable and the G4
 queues were ENABLED/VALID. Evidence is in preflight/.
 
-## Live and archived logs
+## Archived results
 
-The launchers retain console.log and nextflow.log under execution/g4/ or
-execution/g5/. Watch with `tail -F benchmarks/graviton/execution/g4/console.log`.
-After Nextflow exits (success or failure), the launcher copies that directory
-including timestamps and exit-code.txt to the run's S3 results prefix under
-execution/g4/ or execution/g5/. Reports/traces already go to reports/ in S3.
-An upload failure is printed and returns nonzero; local logs remain available.
-Host loss or forced termination can prevent the final upload.
+Normalized results and reports are retained under `comparison/`. Generated
+execution logs and preflight files remain local-only and are ignored by Git.
 
 Historical fastp memory audit: [history/report.md](history/report.md).
 
