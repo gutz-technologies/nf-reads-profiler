@@ -32,9 +32,11 @@ HUMAnN4 each count as one output per sample.
 | G5, Sep 20 | 5,509 | 5,156 | 10,665 | $217.118005 | $0.020358 |
 | G5, Sep 21 | 4,448 | 4,447 | 8,895 | $192.167276 | $0.021604 |
 
-On the clean Sep 19 versus Sep 20 day comparison, G5 produced 80.7% more
-profile outputs and reduced billed compute cost per output by 27.4%, despite
-31.2% higher total compute spend. The G5 profiler fleet billed $408.076974
+The Sep 19 versus Sep 20 daily rows are not an equal-duration speed comparison:
+the G4 fleet stopped at 17:38 UTC on Sep 19, whereas G5 ran for the full Sep 20
+UTC billing day. Use the fixed 02:00-14:00 UTC table above for throughput and
+the complete fleet-phase table below for cost efficiency. The G5 profiler fleet
+billed $408.076974
 across Sep 20-22 before the short-lived `r9g.24xlarge` allocation on Sep 21
 was identified. Including it raises the current G5 profiler total to
 $410.765941 (`c9g.24xlarge`, `r9g.24xlarge`, `c9g.48xlarge`, and
@@ -91,6 +93,47 @@ Small general/tiny-queue instances and non-profiler G4 types are excluded.
 The source is AWS Cost Explorer queried 2026-09-22 with service
 `Amazon Elastic Compute Cloud - Compute`, purchase type `Spot Instances`,
 daily granularity, grouped by instance type.
+
+## Complete profiler fleet phases
+
+| Fleet | Active ET | Active UTC | MetaPhlAn samples | HUMAnN4 samples | Profile outputs | Billed compute | Cost/output |
+|---|---|---|---:|---:|---:|---:|---:|
+| G4 | Sep 18 12:15 PM - Sep 19 1:38 PM EDT | Sep 18 16:15 - Sep 19 17:38 | 3,225 | 3,610 | 6,835 | $180.408316 | $0.026395 |
+| G5 | Sep 19 8:12 PM - Sep 21 9:01 PM EDT | Sep 20 00:12 - Sep 22 01:01 | 9,957 | 9,603 | 19,560 | $410.765941 | $0.021001 |
+
+These are unique successful sample IDs per profiler inside the exact fleet
+intervals. Across the complete phases, G5 produced 186.2% more outputs over a
+roughly twice-as-long interval, spent 127.7% more, and reduced cost per output
+by 20.4%. Those figures describe phase economics, not normalized speed.
+
+Queue allocation for the complete phases:
+
+| Fleet | Queue | Successful samples | Allocated compute | Cost/sample |
+|---|---|---:|---:|---:|
+| G4 | `spot-metaphlan` | 3,225 | $35.542788 | $0.011021 |
+| G4 | `spot-humann` | 3,610 | $144.865528 | $0.040129 |
+| G5 | `spot-metaphlan` | 9,957 | $106.219179 | $0.010668 |
+| G5 | `spot-humann` | 9,603 | $304.546762 | $0.031714 |
+
+The queue totals reconcile to the billed fleet totals. G5 uses known
+instance-type lifetimes for the stable fleet and measured ASG hours for its
+short-lived replacements. Historical G4 instance types are no longer exposed;
+its billed total is allocated in proportion to measured queue ASG
+instance-hours (203.941 HUMAnN and 50.037 MetaPhlAn). Treat the G4 queue split
+as an allocation of a real billed total, not direct queue-tagged billing.
+
+The controlled speed comparison remains Sep 19 versus Sep 20, 02:00-14:00 UTC
+(Sep 18 10 PM-Sep 19 10 AM EDT versus Sep 19 10 PM-Sep 20 10 AM EDT):
+
+| Profiler | G4 outputs | G5 outputs | Change |
+|---|---:|---:|---:|
+| MetaPhlAn | 1,730 | 2,894 | +67.3% |
+| HUMAnN4 | 2,378 | 2,654 | +11.6% |
+| **Both** | **4,108** | **5,548** | **+35.1%** |
+
+Hourly Cost Explorer is not enabled, so AWS does not expose billed spend for
+those exact 12-hour windows. A cost-per-output claim for the morning comparison
+would therefore require an estimate and is intentionally omitted.
 
 ## Trailing seven-day account EC2 cost
 
