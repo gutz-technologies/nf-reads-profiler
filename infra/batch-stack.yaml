@@ -1075,6 +1075,7 @@ Resources:
         InstanceTypes:
           - r9gd.16xlarge # G5
           - r9gd.24xlarge # G5 sometimes cheaper than r9gd.16xlarge
+          - r8gd.16xlarge # G4 fallback with proven MEDI Spot capacity
         LaunchTemplate:
           LaunchTemplateId: !Ref MediWorkerLaunchTemplate
           Version: $Latest
