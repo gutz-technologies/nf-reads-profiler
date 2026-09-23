@@ -911,7 +911,8 @@ Resources:
 # dedicated metal queues (spot-metaphlan / spot-humann). Glue is light
 # (default cpus: 2 / memory: 4 GB = 2 GB/vCPU), so the memory-optimized r8g
 # family (8 GB/vCPU) was dropped — c8g (2 GB/vCPU, cheapest exact fit) + m8g
-# (4 GB/vCPU, headroom for fastp/fasterq-dump) cover it across 4 pools.
+# (4 GB/vCPU, headroom for fastp/fasterq-dump) cover routine glue work. A
+# memory-optimized pool remains for cohort-wide MultiQC retries.
 # TODO: right-size default cpus/memory from the cosmosid-infant trace
 # (outdir/cosmosid-infant/reports/*_trace.txt — peak_rss/cpus columns) before
 # the next big run. Current 2/4 is a first guess, not measured.
@@ -939,6 +940,7 @@ Resources:
           - c8g.2xlarge    # 8 vCPU / 16 GB
           - c8g.4xlarge    # 16 vCPU / 32 GB
           - r9g.large      # 2 vCPU / 16 GB
+          - r8g.4xlarge    # 16 vCPU / 128 GB; fits 64 GiB MultiQC plus host overhead
         LaunchTemplate:
           LaunchTemplateId: !Ref BatchWorkerLaunchTemplate
           Version: $Latest
