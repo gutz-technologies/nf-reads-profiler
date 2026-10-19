@@ -4,11 +4,13 @@ work/
 test/
 .DS_Store
 .nf-test*
+__pycache__/
+*.pyc
 ramdisk_test/keys.sh
 ramdisk_test/
-# Results, including results_cjb
 results_*
-# Test results, from tests/nextflow.config
+# Results, including results_cjb
+# test-out/ already in results_* but explicit for clarity
 test-out/
 # Local only for now
 logs/

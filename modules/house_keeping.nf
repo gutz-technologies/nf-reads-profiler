@@ -6,9 +6,9 @@
 */
 
 process get_software_versions {
+
   //Starting the biobakery container. I need to run metaphlan and Humann to get
   //their version number (due to the fact that they live in the same container)
-  conda "bioconda::multiqc=1.22"
   container params.docker_container_multiqc
 
   //input:
@@ -43,7 +43,7 @@ process count_reads {
   conda "bioconda::fastp=1.2.0"
   container params.docker_container_fastp
 
-  publishDir "${params.outdir}/${params.project}/${run}/readcount", mode: 'copy', pattern: "*_readcount.txt"
+  publishDir {"${params.outdir}/${params.project}/${run}/readcount"}, mode: 'copy', pattern: "*_readcount.txt"
 
   input:
   tuple val(meta), path(reads)
@@ -51,12 +51,11 @@ process count_reads {
   output:
   tuple val(meta), path(reads), env('READ_COUNT'), emit: read_info
   tuple val(meta), path("${name}_readcount.txt"), emit: read_count
-  
+
   script:
   name = task.ext.name ?: "${meta.id}"
   run = task.ext.run ?: "${meta.run}"
   """
-  # Count sequences in first read file (divide line count by 4 since FASTQ has 4 lines per read)
   READ_COUNT=\$(zcat ${reads[0]} | echo \$((`wc -l`/4)))
   echo \$READ_COUNT > ${name}_readcount.txt
   """
@@ -88,7 +87,9 @@ process clean_reads {
     -o ${name}_trimmed.fq.gz \\
     --reads_to_process ${params.nreads} \\
     --dedup \\
+    --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
+    --fix_mgi_id \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}
     """
@@ -102,7 +103,9 @@ process clean_reads {
     -O out.R2.fq.gz \\
     --reads_to_process ${params.nreads} \\
     --dedup \\
+    --dup_calc_accuracy ${params.fastp_dedup_accuracy} \\
     --disable_quality_filtering \\
+    --fix_mgi_id \\
     --json ${name}_fastp.json \\
     --thread ${task.cpus}
 
@@ -116,7 +119,7 @@ process HOSTILE {
   cpus 4
   memory 4.GB
 
-  publishDir "${params.outdir}/${params.project}/${run}/dehosted", mode: 'copy', pattern: "*clean*.fastq.gz"
+  publishDir { "${params.outdir}/${params.project}/${run}/dehosted" }, mode: 'copy', pattern: "*clean*.fastq.gz"
 
   input:
   tuple val(meta), path(reads)
@@ -167,7 +170,7 @@ process HOSTILE {
 
 process MULTIQC {
   tag "$run"
-  publishDir "${params.outdir}/${params.project}/${run}/log", mode: 'copy'
+  publishDir {"${params.outdir}/${params.project}/${run}/log"}, mode: 'copy'
   conda "bioconda::multiqc=1.22"
   container params.docker_container_multiqc
 

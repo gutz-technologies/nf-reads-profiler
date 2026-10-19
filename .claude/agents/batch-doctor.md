@@ -15,8 +15,8 @@ infrastructure and report problems clearly.
 - Stack: `nf-reads-profiler-batch`
 - Queue: `spot-queue`
 - Two compute environments: Spot (primary) + On-Demand (fallback)
-- Workers currently sync ~65 GiB of databases from S3 to `/mnt/dbs/` at boot
-  (being migrated to a pre-baked custom AMI — see `issues/I14-custom-ami-worker.md`)
+- Each per-database queue's workers sync their DB set from S3 to `/mnt/dbs/` at
+  boot (thin stock AMI; see `infra/multiqueue-design.md`)
 - Log group for jobs: `/aws/batch/job`
 - Nextflow logs: `.nextflow.log*` in the repo root
 

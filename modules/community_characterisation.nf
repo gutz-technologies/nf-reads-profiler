@@ -11,39 +11,47 @@
 // Channel.fromPath( params.metaphlan_databases, type: 'dir', checkIfExists: true ).set { bowtie2_metaphlan_databases }
 
 process profile_taxa {
-  tag "$name"
-  conda params.conda_metaphlan
-  container params.docker_container_metaphlan
-  memory 38.GB
-  cpus 4
 
-  publishDir "${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/taxa", mode: 'copy', pattern: "*.{biom,tsv,txt,bz2}"
+  tag "$name"
+
+  // CPUs: request N from the scheduler, run with 2N internally (--nproc task.cpus * 2).
+  // Bowtie2 alignment is partially single-threaded; overprovisioning lets each job
+  // burst onto cores idle at that moment. On spot-metaphlan, 6 jobs (16 cpus each)
+  // share one r8g.metal-24xl (96 vCPU), so the 2x burst draws from the same shared
+  // pool rather than a per-job-dedicated VM — still safe since all 6 rarely peak at once.
+  container params.docker_container_metaphlan
+
+  publishDir {"${params.outdir}/${params.project}/${run}/taxa"}, mode: 'copy', pattern: "*.{biom,tsv,txt}"
 
   input:
   tuple val(meta), path(reads)
 
   output:
   tuple val(meta), path("*_metaphlan.biom"), emit: to_profile_function_bugs
+  // SAM alignment when --enable_strainphlan, otherwise --no_map
+  tuple val(meta), path("*.sam.bz2"), emit: sam, optional: !params.enable_strainphlan
   // tuple val(meta), path("*_profile_taxa_mqc.yaml"), emit: profile_taxa_log
 
 
   script:
   name = task.ext.name ?: "${meta.id}"
+  run = task.ext.run ?: "${meta.run}"
+  sam_opts = params.enable_strainphlan ? "-s ${name}.sam.bz2" : "--no_map"
   """
   echo ${params.direct_metaphlan_db}
 
   metaphlan \\
     --input_type fastq \\
     --tmp_dir . \\
-    --index  ${params.direct_metaphlan_id} \\
+    --index ${params.direct_metaphlan_id} \\
     --db_dir ${params.direct_metaphlan_db} \\
     --bt2_ps ${params.direct_bt2options} \\
     --sample_id ${name} \\
     --biom_format_output \\
     --nproc ${task.cpus * 2} \\
-    --no_map \\
+    ${sam_opts} \\
     --output_file ${name}_metaphlan.biom \\
-    ${reads instanceof List ? reads.join(',') : reads}
+    $reads
 
   # MultiQC doesn't have a module for Metaphlan yet. As a consequence, I
   # had to create a YAML pathwith all the info I need via a bash script
@@ -61,14 +69,15 @@ process profile_taxa {
 // Channel.fromPath( params.humann_uniref, type: 'dir', checkIfExists: true ).set { uniref_databases }
 
 process profile_function {
+
   tag "$name"
-  conda params.conda_humann4
+
+  // CPUs: request N from the scheduler, run with 2N internally (--threads task.cpus * 2).
+  // HUMAnN is partially single-threaded; overprovisioning lets it burst onto idle cores
+  // without reserving them from the queue.
   container params.docker_container_humann4
 
-  memory 60.GB
-  cpus 4
-
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/function" }, mode: 'copy', pattern: "*.{tsv,log}"
+  publishDir {"${params.outdir}/${params.project}/${run}/function" }, mode: 'copy', pattern: "*.{tsv,log}"
 
   input:
   tuple val(meta), path(reads)
@@ -80,12 +89,16 @@ process profile_function {
   tuple val(meta), path("*_3_reactions.tsv"), emit: profile_function_reactions
   tuple val(meta), path("*_4_pathabundance.tsv"), emit: profile_function_pa
   tuple val(meta), path("*_profile_functions_mqc.yaml"), emit: profile_function_log
+  // For before diamond use ${name}_bowtie2_unaligned.fa
+  // For after diamond use ${name}_diamond_unaligned.fa
+  tuple val(meta), path("${name}_humann_temp/${name}_bowtie2_unaligned.fa"), emit: unmapped_reads, optional: true
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   name = task.ext.name ?: "${meta.id}"
+  run = task.ext.run ?: "${meta.run}"
   """
   # HUMAnN 4 will run its own MetaPhlAn profiling internally
   humann \\
@@ -101,6 +114,11 @@ process profile_function {
     --pathways metacyc \\
     --threads ${task.cpus * 2} \\
     --memory-use minimum
+  # HUMAnN temp output kept on purpose (no --remove-temp-output): humann_temp's
+  # bowtie2_unaligned.fa is MEDI's Kraken2 input. profile_function is now
+  # independent of enable_medi, so MEDI can be turned on later via -resume with
+  # NO HUMAnN rerun. Disk savings aren't worth the MEDI-integration edge case,
+  # and these nodes are IO-bound, not disk-bound.
 
   # MultiQC doesn't have a module for humann yet. As a consequence, I
   # had to create a YAML file with all the info I need via a bash script
@@ -111,10 +129,16 @@ process profile_function {
 
 process combine_humann_tables {
   tag "$run"
-  conda params.conda_humann4
+
   container params.docker_container_humann4
 
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/combined_tables" }, mode: 'copy', pattern: "*.{tsv,log}"
+  // Drop the genefamilies combined TSV from publishing: it's the single largest
+  // output (~24 GB/run) and is fully reconstructable from the published
+  // *_genefamilies_{stratified,unstratified}.biom. The file still lands in workDir,
+  // so split_stratified_tables consumes it via the channel as before — only the S3
+  // copy is skipped. reactions/pathabundance combined TSVs (~0.1 GB) stay published.
+  publishDir {"${params.outdir}/${params.project}/${run}/combined_tables" }, mode: 'copy', pattern: "*.{tsv,log}",
+    saveAs: { fn -> fn ==~ /.*_genefamilies_combined\.tsv$/ ? null : fn }
 
   input:
   tuple val(meta), path(table)
@@ -123,7 +147,7 @@ process combine_humann_tables {
   tuple val(meta), path('*_combined.tsv')
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
 
@@ -133,7 +157,7 @@ process combine_humann_tables {
   echo "Combining ${type} tables..."
   echo "Files to combine:"
   ls -la *${type}*
-
+  
   # Check for empty or malformed files
   for file in *${type}*; do
     if [ -s "\$file" ]; then
@@ -144,7 +168,7 @@ process combine_humann_tables {
       echo "Warning: \$file is empty or does not exist"
     fi
   done
-
+  
   # Try to combine tables with verbose output
   humann_join_tables \\
     -i ./ \\
@@ -156,12 +180,14 @@ process combine_humann_tables {
 
 process combine_metaphlan_tables {
   tag "$run"
-  conda params.conda_metaphlan
+
   container params.docker_container_metaphlan
 
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/combined_tables" }, mode: 'copy', pattern: "*.biom"
+  // biom published only to the project-level combined_bioms/ rollup (the canonical
+  // home, shared with MEDI); the per-run combined_tables/ copy was a byte-for-byte
+  // duplicate.
   publishDir {"${params.outdir}/${params.project}/combined_bioms/metaphlan" }, mode: 'copy', pattern: "*.biom"
-
+  
   input:
   tuple val(meta), path(table)
 
@@ -185,6 +211,7 @@ if len(biom_files) == 1:
 else:
     # Load all tables
     tables = [biom.load_table(f) for f in biom_files]
+    
     # Merge tables
     table = tables[0]
     for t in tables[1:]:
@@ -199,11 +226,11 @@ EOF
 
 process combine_humann_taxonomy_tables {
   tag "$run"
-  conda params.conda_metaphlan
+
   container params.docker_container_metaphlan
 
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/combined_tables" }, mode: 'copy', pattern: "*.tsv"
-
+  publishDir {"${params.outdir}/${params.project}/${run}/combined_tables" }, mode: 'copy', pattern: "*.tsv"
+  
   input:
   tuple val(meta), path(table)
 
@@ -217,7 +244,7 @@ process combine_humann_taxonomy_tables {
   echo "Combining HUMAnN taxonomy tables..."
   echo "Files to combine:"
   ls -la *.tsv
-
+  
   # Use MetaPhlAn's merge script to combine the tables
   merge_metaphlan_tables.py \\
     ${table_files} \\
@@ -229,14 +256,16 @@ process combine_humann_taxonomy_tables {
 
 process convert_tables_to_biom {
   tag "${run}_${type}"
+
   container params.docker_container_humann4
 
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/combined_tables" }, mode: 'copy', pattern: "*.biom"
+  // biom published only to the project-level combined_bioms/<type>/ rollup; the
+  // per-run combined_tables/ copy was a byte-for-byte duplicate (~5.9 GB/run).
   publishDir {"${params.outdir}/${params.project}/combined_bioms/genefamilies" }, mode: 'copy', pattern: "*_genefamilies*.biom"
   publishDir {"${params.outdir}/${params.project}/combined_bioms/pathabundance" }, mode: 'copy', pattern: "*_pathabundance*.biom"
   publishDir {"${params.outdir}/${params.project}/combined_bioms/reactions" }, mode: 'copy', pattern: "*_reactions*.biom"
   publishDir {"${params.outdir}/${params.project}/combined_bioms/humann_taxonomy" }, mode: 'copy', pattern: "*_humann_taxonomy.biom"
-
+  
   input:
   tuple val(meta), path(table)
 
@@ -244,7 +273,7 @@ process convert_tables_to_biom {
   tuple val(meta), path("*.biom"), emit: biom_files
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -254,17 +283,53 @@ process convert_tables_to_biom {
   output_name = (stratification && stratification != 'combined' && stratification != 'null') ? "${run}_${type}_${stratification}.biom" : "${run}_${type}.biom"
   """
   echo "Converting ${type} table to biom format (${stratification})"
-  biom convert \\
-    --input-fp ${table} \\
-    --output-fp ${output_name} \\
-    --table-type '${table_type}' \\
-    --to-hdf5
+
+  has_data=\$(python3 -c "
+import sys
+def pos(v):
+    try: return float(v) > 0
+    except: return False
+with open('${table}') as f:
+    for line in f:
+        if line.startswith('#') or not line.strip():
+            continue
+        parts = line.strip().split('\\t')
+        if parts[0] in ('UNMAPPED', 'UNINTEGRATED'):
+            continue
+        if any(pos(v) for v in parts[1:] if v):
+            print('yes'); sys.exit(0)
+print('no')
+")
+
+  if [ "\$has_data" = "yes" ]; then
+    biom convert \\
+      --input-fp ${table} \\
+      --output-fp ${output_name} \\
+      --table-type '${table_type}' \\
+      --to-hdf5
+  else
+    echo "Table is empty or all-zero — writing empty biom placeholder"
+    python3 -c "
+import h5py, numpy as np
+with h5py.File('${output_name}', 'w') as f:
+    f.attrs['id'] = 'None'
+    f.attrs['type'] = '${table_type}'
+    f.attrs['format'] = 'Biological Observation Matrix 1.0.0'
+    f.attrs['format_url'] = 'http://biom-format.org'
+    f.attrs['generated_by'] = 'nf-reads-profiler'
+    f.attrs['creation_date'] = ''
+    f.attrs['shape'] = np.array([0, 0], dtype=np.int32)
+    f.attrs['nnz'] = np.int32(0)
+    f.create_group('observation').create_dataset('ids', data=np.array([], dtype='S'))
+    f.create_group('sample').create_dataset('ids', data=np.array([], dtype='S'))
+"
+  fi
   """
 }
 
 process split_stratified_tables {
   tag "${run}_${type}"
-  conda params.conda_humann4
+
   container params.docker_container_humann4
 
   input:
@@ -275,19 +340,19 @@ process split_stratified_tables {
   tuple val(meta), path("*_unstratified.tsv"), emit: unstratified_tables
 
   when:
-  !params.skipHumann
+  params.enable_humann
 
   script:
   run = task.ext.run ?: "${meta.run}"
   type = task.ext.type ?: "${meta.type}"
   """
   echo "Splitting stratified table: ${tsv_table} (type: ${type})"
-
+  
   # Split the table into stratified and unstratified versions
   humann_split_stratified_table \\
     -i ${tsv_table} \\
     -o .
-
+    
   # List what was created
   echo "Split files created:"
   ls -la *.tsv
@@ -296,10 +361,11 @@ process split_stratified_tables {
 
 process regroup_genefamilies {
   tag "${run}_${type}"
-  conda params.conda_humann4
+
   container params.docker_container_humann4
 
-  publishDir {"${params.outdir}/${params.project}/${task.ext.run ?: meta.run}/function/regrouped" }, mode: 'copy', pattern: "*.biom"
+  // biom published only to the project-level combined_bioms/regrouped/ rollup,
+  // consistent with the other biom outputs (was dual-published per-run).
   publishDir {"${params.outdir}/${params.project}/combined_bioms/regrouped" }, mode: 'copy', pattern: "*.biom"
 
   input:
@@ -309,7 +375,7 @@ process regroup_genefamilies {
   tuple val(meta), path("*.biom"), emit: regrouped_bioms
 
   when:
-  !params.skipHumann && params.humann_regroup && meta.type == 'genefamilies'
+  params.enable_humann && params.humann_regroup && meta.type == 'genefamilies'
 
   script:
   run = task.ext.run ?: "${meta.run}"
@@ -318,12 +384,12 @@ process regroup_genefamilies {
   regroups = params.humann_regroups ?: "uniref90_ko,uniref90_rxn"
   """
   echo "Regrouping genefamilies table: ${genefamilies_biom} (${stratification})"
-
+  
   # Process each regroup type using safe_cluster_process.py
   IFS=',' read -r -a groups <<< "${regroups}"
   for group in "\${groups[@]}"; do
     echo "Regrouping to \$group using safe_cluster_process.py"
-
+    
     # Use safe_cluster_process.py for regrouping
     safe_cluster_process.py \\
       ${genefamilies_biom} \\
@@ -335,7 +401,7 @@ process regroup_genefamilies {
       --output-regex-patterns ".*\\.biom\$" \\
       --output-group-names "\${group}" \\
       --output-prefix ${run}_${type}_${stratification}
-
+      
     # The output will be named ${run}_${type}_${stratification}_\${group}.biom
     mv ${run}_${type}_${stratification}_\${group}.biom ${run}_${type}_${stratification}.\${group}.biom
   done

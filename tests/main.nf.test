@@ -19,7 +19,7 @@ test_pe_4,$projectDir/assets/test_data/SRX4954910_SRR8133837_1.fastq.gz,$project
                 input = "$outputDir/samplesheet-local.csv"
                 project = "test_pe"
                 outdir = "$outputDir"
-                annotation = true
+                
             }
         }
 
@@ -71,7 +71,7 @@ test_pe_4,$projectDir/assets/test_data/SRX4954910_SRR8133837_1.fastq.gz,$project
                 input = "$projectDir/assets/samplesheet-test-local-filter.csv"
                 project = "test_filter"
                 outdir = "$outputDir"
-                annotation = true
+                
                 minreads = 5000  // Set threshold above the filtered sample's read count
             }
         }
@@ -110,7 +110,6 @@ test_sra_2,,,SRR6664342,STUDY_SRA"""
                 input = "$outputDir/samplesheet-sra.csv"
                 project = "test_sra"
                 outdir = "$outputDir"
-                annotation = true
             }
         }
 
@@ -156,7 +155,6 @@ test_sra,,,SRR6664374,STUDY_MIXED"""
                 input = "$outputDir/samplesheet-mixed.csv"
                 project = "test_mixed"
                 outdir = "$outputDir"
-                annotation = true
             }
         }
 
@@ -192,7 +190,6 @@ test_sra_single,,,ERR4775947,STUDY_MIXED
                 input = "$outputDir/samplesheet-mixed-12.csv"
                 project = "test_mixed"
                 outdir = "$outputDir"
-                annotation = true
             }
         }
 
@@ -225,7 +222,6 @@ test_sra_single,,,ERR4775947,STUDY_MIXED
                 input = "$outputDir/samplesheet-sra-three.csv"
                 project = "test_sra_three"
                 outdir = "$outputDir"
-                annotation = true
             }
         }
 
