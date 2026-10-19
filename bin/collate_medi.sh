@@ -12,6 +12,9 @@
 #   lineage  (architeuthis lineage)       → <level>_counts.csv
 #   quantify (quantify.R)                 → food_abundance.csv, food_content.csv
 #   biom     (medi_csv_to_biom.py)        → <run>_food_*.biom
+#   human    (medi_human_read_counts.py) → human_read_counts.csv
+#            Kraken-assigned taxid 9606 counts after Architeuthis filtering;
+#            downstream HUMAnN nucleotide-unmapped reads, no library denominator.
 #
 # Use it to:
 #   * recover runs truncated by the skipCompleted merge bug (skipped samples
@@ -73,6 +76,11 @@ for l in "${LEVELS[@]}"; do
   [ "$n" -gt 0 ] || { echo "ERROR: no .b2 files for level $l — nothing to reduce"; exit 1; }
 done
 
+# Report directly from the staged species .b2 files, retaining empty/unreported
+# samples as NA. Run before reduce so this audit also survives in dry-run outputs.
+docker run --rm -v "$WORK":/work -v "$SCRIPTS":/scripts:ro -w /work "$MPA_IMG" \
+  python3 /scripts/medi_human_read_counts.py /work /work/human_read_counts.csv
+
 # 2. Reduce: merge + lineage (per level) then quantify (across levels). medi image.
 docker run --rm -v "$WORK":/work -v "$DB":/db:ro -w /work "$MEDI_IMG" bash -lc '
   set -euo pipefail
@@ -111,6 +119,7 @@ for l in "${LEVELS[@]}"; do
 done
 aws s3 cp "$WORK/food_abundance.csv" "$STUDY_URI/medi/food_abundance.csv" --only-show-errors
 aws s3 cp "$WORK/food_content.csv"   "$STUDY_URI/medi/food_content.csv"   --only-show-errors
+aws s3 cp "$WORK/human_read_counts.csv" "$STUDY_URI/medi/human_read_counts.csv" --only-show-errors
 aws s3 cp "$WORK/${RUN}_food_abundance.biom"          "$PROJECT_URI/combined_bioms/medi/${RUN}_food_abundance.biom"          --only-show-errors
 aws s3 cp "$WORK/${RUN}_food_content_nutrients.biom"  "$PROJECT_URI/combined_bioms/medi/${RUN}_food_content_nutrients.biom"  --only-show-errors
 aws s3 cp "$WORK/${RUN}_food_content_compounds.biom"  "$PROJECT_URI/combined_bioms/medi/${RUN}_food_content_compounds.biom"  --only-show-errors

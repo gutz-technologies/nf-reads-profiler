@@ -161,6 +161,117 @@ after `print_clades`, which reports the available clades. `--enable_strainphlan`
 is incompatible with `skipCompleted`: skipped samples would drop from the per-run
 clade detection and tree build, so the run errors fast if both are set.
 
+## MEDI downstream human read counts
+
+`bin/collate_medi.sh` also produces `medi/human_read_counts.csv`, with one row
+per sample found in the staged D/G/S Bracken files. It is retained with the other
+local outputs under `--dry-run`, and uploaded alongside food reports otherwise.
+
+`kraken_assigned_human_read_ends` takes `kraken_assigned_reads` for species taxid
+9606 (Homo sapiens) from the species `.b2` file. It counts assignments surviving
+Architeuthis filtering, before Bracken redistribution. It is distinct from
+MEDI's existing `human_reads`, which uses Bracken estimates and repeats across
+food rows. No original-library read count or host percentage is inferred.
+MEDI receives HUMAnN4's `bowtie2_unaligned.fa`: reads without an accepted
+nucleotide alignment to the sample-specific ChocoPhlAn pangenome, before the
+DIAMOND protein search. Human is present in the MEDI database (GRCh38.p14).
+
+`status=reported` means a human row was present. `human_taxon_not_reported`,
+`empty_species_table`, and `missing_species_table` retain `NA` counts: Bracken's
+reporting threshold means absence cannot establish zero human assignments.
+Samples absent from every staged D/G/S file cannot be audited by this report.
+`source_species_table` records the relative species-file path. For an existing
+local or mounted Bracken directory, the report can also be generated alone:
+
+```bash
+python3 bin/medi_human_read_counts.py /path/to/medi/bracken human_read_counts.csv
+```
+
+## Standalone KneadData count collation
+
+The root-level `collate_kneaddata.sh` reads an existing tab-delimited KneadData
+summary with Python 3.9+ (standard library only). It writes a local TSV; it does
+not run profiling or upload results. `--output` refuses to overwrite a file;
+omit it to write to stdout. Diagnostics go to stderr.
+
+```bash
+mkdir -p results_kneaddata
+./collate_kneaddata.sh \
+  /home/ubuntu/github/globus_2026/globus-share/results/cosmosID_kneaddata_read_counts.txt \
+  --cohort cosmosid-infant \
+  --samplesheet /home/ubuntu/gutz-nf-reads-profilers-runs/samplesheets/cosmosid-infant-full.csv \
+  --aliases collate_kneaddata_cosmosid_aliases.csv \
+  --output results_kneaddata/cosmosid.tsv
+./collate_kneaddata.sh \
+  /home/ubuntu/github/globus_2026/globus-share/results/diversigen_kneaddata_read_counts.txt \
+  --cohort diversigen-infant \
+  --samplesheet /home/ubuntu/gutz-nf-reads-profilers-runs/samplesheets/diversigen-infant-published.csv \
+  --output results_kneaddata/diversigen.tsv
+```
+
+Counts are **read ends**, not pairs: raw is `raw pair1 + raw pair2`; each later
+stage sums both paired and both orphan columns. The measured loss is
+`trimmed_read_ends - decontaminated_read_ends`, reported over both trimmed and
+raw totals as fractions from 0 to 1. This avoids treating orphan creation as
+host removal. It also excludes trimming loss from the numerator. Original stage
+counts, source path, SHA-256, line number, reference label, and sample IDs are
+retained for auditing.
+
+**Host attribution is unresolved.** KneadData's
+[read-count exporter](https://github.com/biobakery/kneaddata/blob/master/kneaddata/read_count_table.py)
+extracts stage counts from logs. Its
+[workflow](https://github.com/biobakery/kneaddata/blob/master/kneaddata/knead_data.py)
+can run tandem-repeat filtering between the trimmed count and reference
+decontamination. Its
+[reference output counts](https://github.com/biobakery/kneaddata/blob/master/kneaddata/run.py)
+are retained reads. The supplied summaries do not establish the version,
+intervening filters, alignment settings, or paired-read removal policy. Therefore
+the collator labels the difference as `trimmed_to_decontaminated_removed_*`
+and leaves `host_reference_removed_fraction_*` as `NA`. Do not interpret the
+retained complement as microbial fraction or taxonomic relative abundance.
+
+Additional provider evidence is available in
+`/home/ubuntu/github/globus_2026/globus-share/results/filtered_fastq_README.html`.
+It documents KneadData v0.10.0 for both CosmosID and Diversigen, using
+`kneaddata -i $R1 -i $R2 -o $outputdirectory -db $GRCh38_noalt_as -t 10 --trimmomatic $Trimmomatic-0.39/`.
+That command omits `--bypass-trf`; the
+[v0.10.0 source](https://github.com/biobakery/kneaddata/blob/0.10.0/kneaddata/knead_data.py)
+enables TRF by default and uses strict paired-read decontamination by default.
+This is cohort-level protocol evidence, not a per-sample execution log. It
+supports treating the measured loss as potentially including tandem-repeat
+removal, rather than assigning all of it to host-reference removal. No
+per-sample KneadData logs were found in the checked local Globus results or
+the two mounted cohort directories (through their final-output directories).
+Additional execution logs or pre-reference counts can refine attribution later;
+missing evidence does not exclude a sample from the count or coverage outputs.
+
+`NA`/blank counts remain missing, not zero; incomplete stage totals and affected
+fractions become `NA`. Zero denominators also yield `NA`. Counts must be finite,
+nonnegative integers; duplicate IDs and malformed schemas abort before writing.
+Unequal pair counts or increasing stage totals flag a row as `invalid_counts`
+and suppress derived losses. All summary rows are retained. With `--samplesheet`,
+an outer join adds samples lacking summaries and distinguishes `matched`,
+`summary_only`, and `samplesheet_only`. No pipeline-output presence is inferred
+from samplesheet membership.
+
+Only the terminal `_R1_kneaddata` suffix is removed automatically. Other ID
+changes require an explicit one-to-one alias CSV. The supplied CosmosID aliases
+map 50 `_CP05949` IDs; each mapping was checked against
+`globus_2026/globus-share/results/Cosmos_Infant_SampleID.csv`, including agreement
+between `KneadData_concat_depth` and the summary's final paired-read total.
+
+Local audit on 2026-10-19: CosmosID has 2,098 complete summary rows, all matching
+the full samplesheet with these aliases. Diversigen has 2,944 summary rows:
+2,932 complete and 12 incomplete. All 2,890 published samples match complete
+rows; 54 summary rows are outside that samplesheet. The broader 2,948-row
+by-visit sheet has 7 samples absent from the summary and leaves 3 summary rows
+unmatched. Final and GRCh38 stage counts agree on complete rows in both cohorts.
+Pipeline inputs use paired FASTQs; these upstream metrics also include orphans.
+These two summaries provide no KneadData measurement for GEMMA or TEDDY.
+
+Run focused checks with
+`python3 -m unittest discover -s tests/scripts -p test_collate_kneaddata.py -v`.
+
 ## Databases
 
 All profiles expect pre-staged databases; nothing is downloaded at runtime.
