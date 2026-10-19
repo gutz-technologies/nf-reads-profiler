@@ -3,7 +3,7 @@
 nextflow.enable.dsl=2
 
 include { profile_taxa; profile_function; combine_humann_tables; combine_metaphlan_tables; combine_humann_taxonomy_tables; convert_tables_to_biom; split_stratified_tables; regroup_genefamilies } from './modules/community_characterisation'
-include { MULTIQC; get_software_versions; clean_reads; count_reads} from './modules/house_keeping'
+include { MULTIQC; get_software_versions; clean_reads; count_reads; HOSTILE } from './modules/house_keeping'
 include { AWS_DOWNLOAD; FASTERQ_DUMP  } from './modules/data_handling'
 include { MEDI_QUANT } from './subworkflows/quant'
 include { STRAINPHLAN } from './subworkflows/strainphlan'
@@ -35,6 +35,8 @@ nf-reads-profiler - Version: ${workflow.manifest.version}
     --enable_strainphlan <true|false>  emit MetaPhlAn SAM and run StrainPhlAn (default: false; incompatible with skipCompleted)
     --strainphlan_clades csv           clades to build strain trees for (empty = stop after print_clades)
     --skipCompleted      <true|false>  skip samples whose HUMAnN4 outputs already exist (default: true)
+    --skipHostile        <true|false>  skip human-read removal (hostile) before fastp (default: false; set true for non-human samples)
+    --hostile_db         path          pre-staged hostile index directory
     --nreads             int           subsample cap per sample (default: 32000000)
     --minreads           int           floor; samples below this are dropped, not failed (default: 100000)
 
@@ -146,6 +148,7 @@ workflow {
   log.info """\
     [PIPELINE] nf-reads-profiler ${workflow.manifest.version} | profile=${workflow.profile}
     [WORKDIR]  ${workflow.workDir}
+    [HOSTILE]  ${params.skipHostile ? 'skipped' : params.docker_container_hostile} | db=${params.skipHostile ? 'skipped' : params.hostile_db}
     """.stripIndent()
 
   // Parse input samplesheet using nf-validation plugin
@@ -221,8 +224,14 @@ workflow {
             log.info "Skipping sample ${meta.id} due to insufficient reads: ${count} < ${params.minreads}"
         }
 
-    // Process passing samples
-    clean_reads(read_check.pass.map { meta, reads, _count -> [meta, reads] })
+    // Hostile runs before fastp so the nreads cap applies to microbial reads only,
+    // not a mix of human + microbial. Paired reads stay paired through this step.
+    if (!params.skipHostile) {
+        HOSTILE(read_check.pass.map { meta, reads, _count -> [meta, reads] })
+        clean_reads(HOSTILE.out.reads_dehosted)
+    } else {
+        clean_reads(read_check.pass.map { meta, reads, _count -> [meta, reads] })
+    }
 
   merged_reads = clean_reads.out.reads_cleaned
 

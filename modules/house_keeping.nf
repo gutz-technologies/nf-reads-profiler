@@ -31,6 +31,7 @@ process get_software_versions {
   echo $params.docker_container_humann4 | cut -d: -f 2 > v_humann.txt
   echo $params.docker_container_metaphlan | cut -d: -f 2 > v_metaphlan.txt
   echo $params.docker_container_multiqc | cut -d: -f 2 > v_multiqc.txt
+  echo $params.docker_container_hostile | cut -d: -f 2 > v_hostile.txt
 
   scrape_software_versions.py > software_versions_mqc.yaml
   """
@@ -67,6 +68,7 @@ process clean_reads {
   conda "bioconda::fastp=1.2.0"
   container params.docker_container_fastp
   cpus 4
+  memory 6.GB
 
   input:
   tuple val(meta), path(reads)
@@ -111,6 +113,49 @@ process clean_reads {
     """
   }
 }
+process HOSTILE {
+  tag "$name"
+  container params.docker_container_hostile
+  cpus 4
+  memory 4.GB
+
+  publishDir { "${params.outdir}/${params.project}/${run}/dehosted" }, mode: 'copy', pattern: "*clean*.fastq.gz"
+
+  input:
+  tuple val(meta), path(reads)
+
+  output:
+  tuple val(meta), path("*.clean*.fastq.gz"), emit: reads_dehosted
+
+  script:
+  name = task.ext.name ?: "${meta.id}"
+  run  = task.ext.run  ?: "${meta.run}"
+  if (meta.single_end) {
+    """
+    export HOSTILE_CACHE_DIR=${params.hostile_db}
+    hostile clean \\
+      --fastq1 ${reads[0]} \\
+      --aligner bowtie2 \\
+      --aligner-args " --seed 1992 " \\
+      --output . \\
+      --airplane \\
+      --threads ${task.cpus}
+    """
+  } else {
+    """
+    export HOSTILE_CACHE_DIR=${params.hostile_db}
+    hostile clean \\
+      --fastq1 ${reads[0]} \\
+      --fastq2 ${reads[1]} \\
+      --aligner bowtie2 \\
+      --aligner-args " --seed 1992 " \\
+      --output . \\
+      --airplane \\
+      --threads ${task.cpus}
+    """
+  }
+}
+
 // ------------------------------------------------------------------------------
 //  MULTIQC LOGGING
 // ------------------------------------------------------------------------------
