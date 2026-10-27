@@ -23,7 +23,7 @@ cd docker
 # Build and push multi-arch (amd64 + arm64)
 docker buildx build --platform linux/amd64,linux/arm64 -t colinbrislawn/aws-cli-bash:2 --push aws-cli-bash
 docker buildx build --platform linux/amd64,linux/arm64 -t colinbrislawn/sra-tools-bash:3.0.7 --push sra-tools-bash
-docker buildx build --platform linux/arm64 -t colinbrislawn/hostile:2.0.2 --push hostile
+docker buildx build --platform linux/arm64 -t colinbrislawn/kneaddata:0.10.0 --push kneaddata
 docker buildx build --platform linux/arm64 -t colinbrislawn/metaphlan:4.2.4 --push metaphlan
 docker buildx build --platform linux/arm64 -t colinbrislawn/medi:0.2.1 --push medi
 ```
@@ -43,6 +43,7 @@ docker buildx build --platform linux/arm64 -t $ECR/aws-cli-bash:2 --push aws-cli
 docker buildx build --platform linux/arm64 -t $ECR/sra-tools-bash:3.0.7 --push sra-tools-bash
 docker buildx build --platform linux/arm64 -t $ECR/metaphlan:4.2.4 --push metaphlan
 docker buildx build --platform linux/arm64 -t $ECR/medi:0.2.1 --push medi
+docker buildx build --platform linux/arm64 -t $ECR/kneaddata:0.10.0 --push kneaddata
 
 # Mirror public images to our ECR
 docker pull --platform linux/arm64 barbarahelena/humann:4.0.3
@@ -61,31 +62,51 @@ docker push $ECR/multiqc:v1.22.3
 cd ..
 ```
 
-## hostile index (one-time download)
+## KneadData 0.10.0 (standalone preprocessing)
 
-hostile downloads its human reference index separately from the image.
-Run this once to cache the bowtie2 index (paired-end short reads) to `~/disk_dbs/hostile/`:
+The image installs Bioconda KneadData **0.10.0** and Trimmomatic **0.39** to
+match the documented CosmosID/Diversigen cohort protocol. It replaces the
+standalone Hostile image; preprocessing is not wired into Nextflow yet.
+Run it only for cohorts that still need preprocessing. For cohorts already
+processed with KneadData, supply their cleaned FASTQs directly to the pipeline;
+do not run KneadData a second time.
+The Dockerfile exposes the Trimmomatic JAR on PATH for this older KneadData
+release. Bowtie2 and the remaining dependencies are resolved at build time;
+record their versions and the image digest with each run. This does not establish
+an exact match to the providers' full software environment.
+
+Build and check locally before publishing (from the repository root):
+
+```sh
+docker build -t colinbrislawn/kneaddata:0.10.0 docker/kneaddata
+docker run --rm colinbrislawn/kneaddata:0.10.0 kneaddata --version
+```
+
+Keep reference databases outside the image. To reproduce the cohorts, obtain the
+same **GRCh38_noalt_as** Bowtie2 index and record its source and checksums. A newer
+T2T/human reference is a different filtering protocol. Mount the complete index
+directory; `-db` takes the index **prefix**, not the directory or a `.bt2` file.
 
 ```sh
 docker run --rm \
-  -v ~/disk_dbs/hostile:/root/.local/share/hostile \
-  colinbrislawn/hostile:2.0.2 \
-  hostile index fetch --bowtie2
+  -v /path/to/GRCh38_noalt_as:/db:ro \
+  -v /path/to/data:/data:ro -v /path/to/out:/out \
+  colinbrislawn/kneaddata:0.10.0 \
+  kneaddata \
+    -i /data/R1.fastq.gz -i /data/R2.fastq.gz \
+    -o /out -db /db/GRCh38_noalt_as -t 10
 ```
 
-Then pass `--airplane` on all subsequent `hostile clean` runs and mount the same directory:
+The repeated `-i` syntax is specific to this older interface. Trimmomatic is
+found through PATH, so no host-side `--trimmomatic` path is needed. This command
+retains the cohort's default trimming, TRF filtering, and strict paired-read
+removal behavior. Loss between trimmed and decontaminated counts can include
+TRF removal; do not label all of it as host removal. Preserve KneadData logs for
+stage-level counts and provenance.
 
-```sh
-docker run --rm \
-  -v ~/disk_dbs/hostile:/root/.local/share/hostile \
-  -v /path/to/data:/data -v /path/to/out:/out \
-  colinbrislawn/hostile:2.0.2 \
-  hostile clean \
-    --fastq1 /data/R1.fastq.gz --fastq2 /data/R2.fastq.gz \
-    -o /out --airplane --threads 4
-```
-
-On AWS workers, mount `/mnt/dbs/hostile` instead and include the index in the `aws s3 sync`.
+For AWS, provision the same index on workers and mount its directory. The build
+commands above prepare an ARM64 image; the upstream `biobakery/kneaddata:0.10.0`
+image is AMD64-only. Avoid upstream `:latest`, which points to 0.7.10.
 
 ## View images we can give to Nextlow
 
